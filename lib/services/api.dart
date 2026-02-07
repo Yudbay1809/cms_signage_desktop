@@ -1,46 +1,165 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:dio/dio.dart';
 import 'package:http/http.dart' as http;
 import '../models/types.dart';
 
 class ApiService {
   String baseUrl;
-  ApiService(this.baseUrl);
+  String? apiKey;
+  static const Duration _timeout = Duration(seconds: 8);
+  static const List<Duration> _retryDelays = [
+    Duration(milliseconds: 400),
+    Duration(milliseconds: 1000),
+  ];
+  ApiService(this.baseUrl, {this.apiKey});
 
-  String _url(String path) => path.startsWith('http') ? path : '$baseUrl$path';
+  String _formatHttpError(http.Response res) {
+    final reason = res.reasonPhrase ?? '';
+    final body = res.body.trim();
+    if (body.isEmpty) return '${res.statusCode} $reason'.trim();
+    return '${res.statusCode} $reason - $body'.trim();
+  }
+
+  Uri _uri(String path, [Map<String, String>? queryParameters]) {
+    final uri = path.startsWith('http') ? Uri.parse(path) : Uri.parse(baseUrl).resolve(path);
+    if (queryParameters == null || queryParameters.isEmpty) return uri;
+    return uri.replace(queryParameters: {...uri.queryParameters, ...queryParameters});
+  }
+
+  Map<String, String> _headers() {
+    if (apiKey == null || apiKey!.isEmpty) return {};
+    return {'X-API-Key': apiKey!};
+  }
+
+  bool _isTransient(Object error) => error is TimeoutException || error is SocketException || error is HttpException;
+
+  Future<http.Response> _sendWithRetry(Future<http.Response> Function() call) async {
+    Object? lastError;
+    for (var attempt = 0; attempt <= _retryDelays.length; attempt++) {
+      try {
+        final res = await call().timeout(_timeout);
+        if (res.statusCode >= 500 && attempt < _retryDelays.length) {
+          await Future.delayed(_retryDelays[attempt]);
+          continue;
+        }
+        return res;
+      } catch (error) {
+        lastError = error;
+        if (!_isTransient(error) || attempt >= _retryDelays.length) rethrow;
+        await Future.delayed(_retryDelays[attempt]);
+      }
+    }
+    throw Exception('Request gagal: $lastError');
+  }
 
   Future<List<DeviceInfo>> listDevices() async {
-    final res = await http.get(Uri.parse(_url('/devices')));
+    final res = await _sendWithRetry(() => http.get(_uri('/devices'), headers: _headers()));
     if (res.statusCode != 200) {
-      throw Exception('Failed to list devices: ${res.statusCode}');
+      throw Exception('Failed to list devices: ${_formatHttpError(res)}');
     }
     final data = jsonDecode(res.body) as List<dynamic>;
     return data.map((e) => DeviceInfo.fromJson(e)).toList();
   }
 
-  Future<List<MediaInfo>> listMedia() async {
-    final res = await http.get(Uri.parse(_url('/media')));
+  Future<DeviceInfo> registerDevice({
+    required String name,
+    String location = '',
+    String orientation = 'portrait',
+  }) async {
+    final res = await _sendWithRetry(
+      () => http.post(
+        _uri('/devices/register', {'name': name, 'location': location, 'orientation': orientation}),
+        headers: _headers(),
+      ),
+    );
     if (res.statusCode != 200) {
-      throw Exception('Failed to list media: ${res.statusCode}');
+      throw Exception('Failed to register device: ${_formatHttpError(res)}');
+    }
+    return DeviceInfo.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  Future<void> updateDeviceOrientation(String deviceId, String orientation) async {
+    final res = await _sendWithRetry(
+      () => http.put(
+        _uri('/devices/$deviceId', {'orientation': orientation}),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Failed to update device: ${_formatHttpError(res)}');
+    }
+  }
+
+  Future<void> deleteDevice(String deviceId) async {
+    final res = await _sendWithRetry(() => http.delete(_uri('/devices/$deviceId'), headers: _headers()));
+    if (res.statusCode != 200) {
+      throw Exception('Failed to delete device: ${_formatHttpError(res)}');
+    }
+  }
+
+  Future<List<MediaInfo>> listMedia() async {
+    final res = await _sendWithRetry(() => http.get(_uri('/media'), headers: _headers()));
+    if (res.statusCode != 200) {
+      throw Exception('Failed to list media: ${_formatHttpError(res)}');
     }
     final data = jsonDecode(res.body) as List<dynamic>;
     return data.map((e) => MediaInfo.fromJson(e)).toList();
   }
 
-  Future<List<ScreenInfo>> listScreensForDevice(String deviceId) async {
-    final res = await http.get(Uri.parse(_url('/devices/$deviceId/config')));
+  Future<MediaPageInfo> listMediaPage({
+    int offset = 0,
+    int limit = 120,
+    String? query,
+    String? type,
+  }) async {
+    final params = <String, String>{
+      'offset': '$offset',
+      'limit': '$limit',
+    };
+    final keyword = (query ?? '').trim();
+    if (keyword.isNotEmpty) params['q'] = keyword;
+    if (type != null && type.isNotEmpty && type != 'all') params['type'] = type;
+
+    final res = await _sendWithRetry(() => http.get(_uri('/media/page', params), headers: _headers()));
     if (res.statusCode != 200) {
-      throw Exception('Failed to fetch device config: ${res.statusCode}');
+      throw Exception('Failed to list media page: ${_formatHttpError(res)}');
     }
-    final data = jsonDecode(res.body);
-    final screens = (data['screens'] as List).map((s) => ScreenInfo(id: s['screen_id'], name: s['name'] ?? '')).toList();
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final itemsRaw = (data['items'] as List<dynamic>? ?? const []);
+    final items = itemsRaw.map((e) => MediaInfo.fromJson(e as Map<String, dynamic>)).toList();
+    return MediaPageInfo(
+      items: items,
+      total: (data['total'] as num?)?.toInt() ?? items.length,
+      offset: (data['offset'] as num?)?.toInt() ?? offset,
+      limit: (data['limit'] as num?)?.toInt() ?? limit,
+    );
+  }
+
+  Future<Map<String, dynamic>> fetchDeviceConfigRaw(String deviceId) async {
+    final res = await _sendWithRetry(() => http.get(_uri('/devices/$deviceId/config'), headers: _headers()));
+    if (res.statusCode != 200) {
+      throw Exception('Failed to fetch device config: ${_formatHttpError(res)}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  Future<List<ScreenInfo>> listScreensForDevice(String deviceId) async {
+    final data = await fetchDeviceConfigRaw(deviceId);
+    final rawScreens = data['screens'];
+    if (rawScreens is! List) return [];
+    final screens = rawScreens
+        .whereType<Map>()
+        .map((s) => ScreenInfo(id: '${s['screen_id']}', name: (s['name'] ?? '').toString()))
+        .toList();
     return screens;
   }
 
   Future<List<PlaylistInfo>> listPlaylists(String screenId) async {
-    final res = await http.get(Uri.parse(_url('/playlists?screen_id=$screenId')));
+    final res = await _sendWithRetry(() => http.get(_uri('/playlists', {'screen_id': screenId}), headers: _headers()));
     if (res.statusCode != 200) {
-      throw Exception('Failed to list playlists: ${res.statusCode}');
+      throw Exception('Failed to list playlists: ${_formatHttpError(res)}');
     }
     final data = jsonDecode(res.body) as List<dynamic>;
     return data.map((e) => PlaylistInfo(id: e['id'], name: e['name'] ?? '')).toList();
@@ -51,35 +170,59 @@ class ApiService {
     required String name,
     required String type,
     required int durationSec,
+    void Function(double progress)? onProgress,
   }) async {
-    final req = http.MultipartRequest('POST', Uri.parse(_url('/media/upload')));
-    req.fields['name'] = name;
-    req.fields['type'] = type;
-    req.fields['duration_sec'] = durationSec.toString();
-    req.files.add(await http.MultipartFile.fromPath('file', file.path));
+    final dio = Dio();
+    final formData = FormData.fromMap({
+      'file': await MultipartFile.fromFile(file.path),
+      'name': name,
+      'type': type,
+      'duration_sec': durationSec.toString(),
+    });
 
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
+    final res = await dio.post(
+      _uri('/media/upload').toString(),
+      data: formData,
+      options: Options(headers: _headers()),
+      onSendProgress: (sent, total) {
+        if (total > 0 && onProgress != null) {
+          onProgress(sent / total);
+        }
+      },
+    );
+
     if (res.statusCode != 200) {
       throw Exception('Upload failed: ${res.statusCode}');
     }
-    return MediaInfo.fromJson(jsonDecode(body));
+
+    return MediaInfo.fromJson(res.data is String ? jsonDecode(res.data) : res.data);
+  }
+
+  Future<void> deleteMedia(String mediaId) async {
+    final res = await _sendWithRetry(() => http.delete(_uri('/media/$mediaId'), headers: _headers()));
+    if (res.statusCode != 200) {
+      throw Exception('Delete media failed: ${_formatHttpError(res)}');
+    }
   }
 
   Future<PlaylistInfo> createPlaylist(String screenId, String name) async {
-    final url = _url('/playlists?screen_id=$screenId&name=${Uri.encodeComponent(name)}');
-    final res = await http.post(Uri.parse(url));
+    final res = await _sendWithRetry(
+      () => http.post(
+        _uri('/playlists', {'screen_id': screenId, 'name': name}),
+        headers: _headers(),
+      ),
+    );
     if (res.statusCode != 200) {
-      throw Exception('Create playlist failed: ${res.statusCode}');
+      throw Exception('Create playlist failed: ${_formatHttpError(res)}');
     }
     final data = jsonDecode(res.body);
     return PlaylistInfo(id: data['id'], name: data['name'] ?? name);
   }
 
   Future<void> deletePlaylist(String playlistId) async {
-    final res = await http.delete(Uri.parse(_url('/playlists/$playlistId')));
+    final res = await _sendWithRetry(() => http.delete(_uri('/playlists/$playlistId'), headers: _headers()));
     if (res.statusCode != 200) {
-      throw Exception('Delete playlist failed: ${res.statusCode}');
+      throw Exception('Delete playlist failed: ${_formatHttpError(res)}');
     }
   }
 
@@ -87,12 +230,17 @@ class ApiService {
     required String playlistId,
     required String mediaId,
     required int order,
-    required int durationSec,
+    int? durationSec,
   }) async {
-    final url = _url('/playlists/$playlistId/items?media_id=$mediaId&order=$order&duration_sec=$durationSec&enabled=true');
-    final res = await http.post(Uri.parse(url));
+    final query = <String, String>{
+      'media_id': mediaId,
+      'order': order.toString(),
+      'enabled': 'true',
+    };
+    if (durationSec != null) query['duration_sec'] = durationSec.toString();
+    final res = await _sendWithRetry(() => http.post(_uri('/playlists/$playlistId/items', query), headers: _headers()));
     if (res.statusCode != 200) {
-      throw Exception('Add item failed: ${res.statusCode}');
+      throw Exception('Add item failed: ${_formatHttpError(res)}');
     }
   }
 
@@ -103,10 +251,59 @@ class ApiService {
     required String startTime,
     required String endTime,
   }) async {
-    final url = _url('/schedules?screen_id=$screenId&playlist_id=$playlistId&day_of_week=$dayOfWeek&start_time=$startTime&end_time=$endTime');
-    final res = await http.post(Uri.parse(url));
+    final res = await _sendWithRetry(
+      () => http.post(
+        _uri('/schedules', {
+          'screen_id': screenId,
+          'playlist_id': playlistId,
+          'day_of_week': dayOfWeek.toString(),
+          'start_time': startTime,
+          'end_time': endTime,
+        }),
+        headers: _headers(),
+      ),
+    );
     if (res.statusCode != 200) {
-      throw Exception('Create schedule failed: ${res.statusCode}');
+      throw Exception('Create schedule failed: ${_formatHttpError(res)}');
+    }
+  }
+
+  Future<List<ScheduleInfo>> listSchedules(String screenId) async {
+    final res = await _sendWithRetry(() => http.get(_uri('/schedules', {'screen_id': screenId}), headers: _headers()));
+    if (res.statusCode != 200) {
+      throw Exception('Failed to list schedules: ${_formatHttpError(res)}');
+    }
+    final data = jsonDecode(res.body) as List<dynamic>;
+    return data.map((e) => ScheduleInfo.fromJson(e)).toList();
+  }
+
+  Future<void> deleteSchedule(String scheduleId) async {
+    final res = await _sendWithRetry(() => http.delete(_uri('/schedules/$scheduleId'), headers: _headers()));
+    if (res.statusCode != 200) {
+      throw Exception('Delete schedule failed: ${_formatHttpError(res)}');
+    }
+  }
+
+  Future<void> updateSchedule({
+    required String scheduleId,
+    required int dayOfWeek,
+    required String startTime,
+    required String endTime,
+    required String playlistId,
+  }) async {
+    final res = await _sendWithRetry(
+      () => http.put(
+        _uri('/schedules/$scheduleId', {
+          'day_of_week': dayOfWeek.toString(),
+          'start_time': startTime,
+          'end_time': endTime,
+          'playlist_id': playlistId,
+        }),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Update schedule failed: ${_formatHttpError(res)}');
     }
   }
 }

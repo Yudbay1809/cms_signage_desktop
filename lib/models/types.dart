@@ -3,8 +3,10 @@ class DeviceInfo {
   final String name;
   final String? location;
   final String status;
+  final DateTime? lastSeen;
+  final String? orientation;
 
-  DeviceInfo({required this.id, required this.name, this.location, required this.status});
+  DeviceInfo({required this.id, required this.name, this.location, required this.status, this.lastSeen, this.orientation});
 
   factory DeviceInfo.fromJson(Map<String, dynamic> json) {
     return DeviceInfo(
@@ -12,6 +14,8 @@ class DeviceInfo {
       name: json['name'] ?? '',
       location: json['location'],
       status: json['status'] ?? 'unknown',
+      lastSeen: json['last_seen'] != null ? DateTime.tryParse(json['last_seen']) : null,
+      orientation: json['orientation'],
     );
   }
 }
@@ -36,6 +40,20 @@ class MediaInfo {
   }
 }
 
+class MediaPageInfo {
+  final List<MediaInfo> items;
+  final int total;
+  final int offset;
+  final int limit;
+
+  MediaPageInfo({
+    required this.items,
+    required this.total,
+    required this.offset,
+    required this.limit,
+  });
+}
+
 class ScreenInfo {
   final String id;
   final String name;
@@ -48,4 +66,33 @@ class PlaylistInfo {
   final String name;
 
   PlaylistInfo({required this.id, required this.name});
+}
+
+class ScheduleInfo {
+  final String id;
+  final String screenId;
+  final String playlistId;
+  final int dayOfWeek;
+  final String startTime;
+  final String endTime;
+
+  ScheduleInfo({
+    required this.id,
+    required this.screenId,
+    required this.playlistId,
+    required this.dayOfWeek,
+    required this.startTime,
+    required this.endTime,
+  });
+
+  factory ScheduleInfo.fromJson(Map<String, dynamic> json) {
+    return ScheduleInfo(
+      id: '${json['id']}',
+      screenId: '${json['screen_id']}',
+      playlistId: '${json['playlist_id']}',
+      dayOfWeek: json['day_of_week'] ?? 0,
+      startTime: (json['start_time'] ?? '').toString(),
+      endTime: (json['end_time'] ?? '').toString(),
+    );
+  }
 }

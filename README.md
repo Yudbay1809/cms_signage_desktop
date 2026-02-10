@@ -1,39 +1,55 @@
 # CMS Signage Desktop
 
-Desktop CMS berbasis Flutter untuk operasional digital signage:
-upload media, buat playlist, atur schedule, dan kontrol banyak device sekaligus.
+[![Flutter CI](https://github.com/Yudbay1809/cms_signage_desktop/actions/workflows/flutter-ci.yml/badge.svg)](https://github.com/Yudbay1809/cms_signage_desktop/actions/workflows/flutter-ci.yml)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-success)
+![Flutter](https://img.shields.io/badge/Flutter-3.38.x-blue)
+![License](https://img.shields.io/badge/license-MIT-informational)
 
-## Fitur Utama
-- Manajemen media (upload, preview, delete)
-- Playlist builder + urutan konten drag-and-drop
-- Schedule editor (create/edit/delete)
-- Multi-device assignment playlist
-- Device management (orientation, delete, bulk delete)
-- Auto-discovery server + retry network
-- Pagination media agar server lebih ringan
+Desktop CMS built with Flutter for digital signage operations: upload media, build playlists, schedule content, and manage devices.
 
-## Alur Operasional
-1. Set `Base URL` backend (auto detect tersedia)
-2. Upload media (gambar/video)
-3. Buat playlist dari media
-4. Atur schedule
-5. Apply playlist ke device yang dipilih
+## Features
+- Media management (upload, preview, delete)
+- Playlist builder with ordering
+- Schedule management (create, edit, delete)
+- Device management (orientation and cleanup)
+- Backend server auto-discovery support
+- Paginated media listing for large catalogs
 
-## UI Preview
-> Simpan screenshot di `docs/screenshots/` lalu update nama file berikut.
+## Tech Stack
+- Flutter / Dart
+- `http`, `dio`
+- `file_picker`, `desktop_drop`
+- `video_player`
 
-![Dashboard](docs/screenshots/dashboard.png)
-![Playlist Builder](docs/screenshots/playlist-builder.png)
-![Schedule & Grid Preset](docs/screenshots/schedule-grid.png)
-![Device Management](docs/screenshots/devices.png)
-
-## Jalankan Project
+## Run Locally
 ```bash
 flutter pub get
 flutter run -d windows
+```
+
+## Quality Checks
+```bash
+flutter analyze
+flutter test
 ```
 
 ## Build Release
 ```bash
 flutter build windows --release
 ```
+
+## Screenshots
+Store screenshots in `docs/screenshots/` and keep references updated:
+- `docs/screenshots/dashboard.png`
+- `docs/screenshots/playlist-builder.png`
+- `docs/screenshots/schedule-grid.png`
+- `docs/screenshots/devices.png`
+
+## Security
+Report vulnerabilities privately as defined in `SECURITY.md`.
+
+## Contributing
+See `CONTRIBUTING.md`.
+
+## License
+MIT License. See `LICENSE`.

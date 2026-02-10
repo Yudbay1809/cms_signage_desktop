@@ -57,8 +57,10 @@ class MediaPageInfo {
 class ScreenInfo {
   final String id;
   final String name;
+  final String? activePlaylistId;
+  final String? gridPreset;
 
-  ScreenInfo({required this.id, required this.name});
+  ScreenInfo({required this.id, required this.name, this.activePlaylistId, this.gridPreset});
 }
 
 class PlaylistInfo {
@@ -66,6 +68,35 @@ class PlaylistInfo {
   final String name;
 
   PlaylistInfo({required this.id, required this.name});
+}
+
+class PlaylistItemInfo {
+  final String id;
+  final String playlistId;
+  final String mediaId;
+  final int order;
+  final int? durationSec;
+  final bool enabled;
+
+  PlaylistItemInfo({
+    required this.id,
+    required this.playlistId,
+    required this.mediaId,
+    required this.order,
+    this.durationSec,
+    required this.enabled,
+  });
+
+  factory PlaylistItemInfo.fromJson(Map<String, dynamic> json) {
+    return PlaylistItemInfo(
+      id: '${json['id']}',
+      playlistId: '${json['playlist_id']}',
+      mediaId: '${json['media_id']}',
+      order: (json['order'] as num?)?.toInt() ?? 0,
+      durationSec: (json['duration_sec'] as num?)?.toInt(),
+      enabled: json['enabled'] == null ? true : json['enabled'] == true,
+    );
+  }
 }
 
 class ScheduleInfo {

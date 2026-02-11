@@ -25,7 +25,7 @@ class CmsApp extends StatelessWidget {
       brightness: Brightness.light,
     );
     return MaterialApp(
-      title: 'Content Control',
+      title: 'CMS Signage Desktop',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: colorScheme,
@@ -39,7 +39,9 @@ class CmsApp extends StatelessWidget {
           color: Colors.white.withValues(alpha: 0.94),
           elevation: 3,
           shadowColor: const Color(0x1A0F172A),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           margin: EdgeInsets.zero,
         ),
         inputDecorationTheme: InputDecorationTheme(
@@ -57,14 +59,19 @@ class CmsApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: colorScheme.primary, width: 1.4),
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 12,
+          ),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: colorScheme.primary,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         ),
         tabBarTheme: TabBarThemeData(
@@ -141,24 +148,59 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   final Map<String, String> _deviceGridPreset = {};
   final Map<String, String?> _devicePlaylistSelection = {};
   String? _managePlaylistId;
-  final TextEditingController _managePlaylistNameController = TextEditingController();
+  final TextEditingController _managePlaylistNameController =
+      TextEditingController();
   String? _manageAddMediaId;
-  final TextEditingController _manageAddDurationController = TextEditingController(text: '10');
+  final TextEditingController _manageAddDurationController =
+      TextEditingController(text: '10');
   List<_ManagePlaylistItem> _managePlaylistItems = [];
   final Set<String> _manageSelectedItemIds = {};
   bool _managePlaylistLoading = false;
   bool _managePlaylistDirty = false;
-  final TextEditingController _flashSaleNameController = TextEditingController();
-  final TextEditingController _flashSaleStartController = TextEditingController(text: '09:00');
-  final TextEditingController _flashSaleEndController = TextEditingController(text: '21:00');
-  final TextEditingController _flashSaleMediaQueryController = TextEditingController();
-  final Set<String> _flashSaleMediaIds = {};
-  final Map<String, int> _flashSaleMediaDurations = {};
+  final TextEditingController _flashSaleScheduleStartController =
+      TextEditingController(text: '09:00');
+  final TextEditingController _flashSaleScheduleEndController =
+      TextEditingController(text: '21:00');
+  final TextEditingController _flashSaleCountdownController =
+      TextEditingController(text: '600');
+  final TextEditingController _flashSaleNoteController =
+      TextEditingController();
+  final List<_FlashSaleProductDraft> _flashSaleProducts = [
+    _FlashSaleProductDraft(
+      name: 'Cushion Foundation',
+      brand: 'Glow Kiss',
+      normalPrice: '129000',
+      promoPrice: '79000',
+      stock: '12',
+      mediaId: '',
+    ),
+    _FlashSaleProductDraft(
+      name: 'Lip Cream Matte',
+      brand: 'Velvet Charm',
+      normalPrice: '99000',
+      promoPrice: '59000',
+      stock: '9',
+      mediaId: '',
+    ),
+    _FlashSaleProductDraft(
+      name: 'Serum Vitamin C',
+      brand: 'Pure Aura',
+      normalPrice: '189000',
+      promoPrice: '109000',
+      stock: '6',
+      mediaId: '',
+    ),
+  ];
   final Set<String> _flashSaleDeviceIds = {};
-  final Set<int> _flashSaleDays = {1, 2, 3, 4, 5, 6, 0};
-  String _flashSaleMediaFilter = 'all';
-  String _flashSaleGridPreset = '1x1';
+  final Set<String> _selectedFlashSalePlaylistIds = {};
+  final Set<int> _flashSaleScheduleDays = {1, 2, 3, 4, 5, 6, 0};
+  String? _flashSaleSourcePlaylistName;
   bool _flashSaleBusy = false;
+  bool _flashSaleCleanupBusy = false;
+  bool _flashSaleMediaCheckBusy = false;
+  DateTime? _flashSaleMediaCheckedAt;
+  final Map<String, List<String>> _flashSaleMissingMediaByDevice = {};
+  final Map<String, String> _flashSaleMediaErrorByDevice = {};
   String? _gridTargetDeviceId;
   String _gridTargetPreset = '1x1';
   bool _gridTargetLoading = false;
@@ -166,7 +208,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   final Set<String> _selectedDeviceIds = {};
   String? _selectedScreenId;
   String? _selectedPlaylistId;
-  String? _selectedLibraryPlaylistId;
+  String? _bulkPlaylistName;
   List<File> _selectedFiles = [];
   String _mediaType = 'auto';
   int _durationSec = 10;
@@ -175,6 +217,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   final List<String> _selectedMediaIds = [];
   final Map<String, int> _mediaDurations = {};
   final Map<String, String> _screenGridPresets = {};
+  final Map<String, int> _screenTransitionDurations = {};
+  int _gridTargetTransitionDuration = 1;
   bool _uploading = false;
   double _uploadProgress = 0.0;
   bool _autoRefresh = true;
@@ -193,7 +237,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     _setAutoRefresh(true);
   }
 
-  ApiService get _api => ApiService(_baseUrlController.text.trim(), apiKey: _apiKeyController.text.trim());
+  ApiService get _api => ApiService(
+    _baseUrlController.text.trim(),
+    apiKey: _apiKeyController.text.trim(),
+  );
 
   @override
   void dispose() {
@@ -206,10 +253,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     _apiKeyController.dispose();
     _managePlaylistNameController.dispose();
     _manageAddDurationController.dispose();
-    _flashSaleNameController.dispose();
-    _flashSaleStartController.dispose();
-    _flashSaleEndController.dispose();
-    _flashSaleMediaQueryController.dispose();
+    _flashSaleScheduleStartController.dispose();
+    _flashSaleScheduleEndController.dispose();
+    _flashSaleCountdownController.dispose();
+    _flashSaleNoteController.dispose();
     super.dispose();
   }
 
@@ -240,7 +287,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   void _scheduleRealtimeReconnect() {
     _realtimeReconnectTimer?.cancel();
-    _realtimeReconnectTimer = Timer(const Duration(seconds: 5), _connectRealtime);
+    _realtimeReconnectTimer = Timer(
+      const Duration(seconds: 5),
+      _connectRealtime,
+    );
   }
 
   void _queueRealtimeRefresh() {
@@ -255,14 +305,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     final base = _normalizeBaseUrl(_baseUrlController.text);
     if (base.isEmpty) return;
     final wsUrl = '${_toWsUrl(base)}/ws/updates';
-    final isOpen = _realtimeSocket != null && _realtimeSocket!.readyState == WebSocket.open;
+    final isOpen =
+        _realtimeSocket != null &&
+        _realtimeSocket!.readyState == WebSocket.open;
     if (isOpen && _connectedWsUrl == wsUrl) return;
 
     _realtimeConnecting = true;
     _realtimeReconnectTimer?.cancel();
     _closeRealtimeSocket();
     try {
-      final socket = await WebSocket.connect(wsUrl).timeout(const Duration(seconds: 5));
+      final socket = await WebSocket.connect(
+        wsUrl,
+      ).timeout(const Duration(seconds: 5));
       _realtimeSocket = socket;
       _connectedWsUrl = wsUrl;
       socket.listen(
@@ -301,29 +355,37 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     if (parsed == null || parsed.host.isEmpty) return null;
     final host = parsed.host;
     final port = parsed.hasPort ? parsed.port : 8000;
-    final probes = <String>[
-      'http://$host:$port',
-    ];
+    final probes = <String>['http://$host:$port'];
 
     for (final probeUrl in probes) {
       final probeParsed = Uri.parse(probeUrl);
       final scheme = probeParsed.scheme;
       try {
-        final res = await http.get(Uri.parse('$probeUrl/server-info')).timeout(const Duration(milliseconds: 500));
+        final res = await http
+            .get(Uri.parse('$probeUrl/server-info'))
+            .timeout(const Duration(milliseconds: 500));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body) as Map<String, dynamic>;
           final base = _normalizeBaseUrl((data['base_url'] ?? '').toString());
           if (base.isNotEmpty) return base;
-          final discoveredPort = (data['server_port'] ?? '$port').toString().trim();
-          if (discoveredPort.isNotEmpty) return '$scheme://$host:$discoveredPort';
+          final discoveredPort = (data['server_port'] ?? '$port')
+              .toString()
+              .trim();
+          if (discoveredPort.isNotEmpty)
+            return '$scheme://$host:$discoveredPort';
           return '$scheme://$host';
         }
 
-        final fallback = await http.get(Uri.parse('$probeUrl/healthz')).timeout(const Duration(milliseconds: 450));
+        final fallback = await http
+            .get(Uri.parse('$probeUrl/healthz'))
+            .timeout(const Duration(milliseconds: 450));
         if (fallback.statusCode == 200) {
           final data = jsonDecode(fallback.body) as Map<String, dynamic>;
-          final discoveredPort = (data['server_port'] ?? '$port').toString().trim();
-          if (discoveredPort.isNotEmpty) return '$scheme://$host:$discoveredPort';
+          final discoveredPort = (data['server_port'] ?? '$port')
+              .toString()
+              .trim();
+          if (discoveredPort.isNotEmpty)
+            return '$scheme://$host:$discoveredPort';
           return '$scheme://$host';
         }
       } catch (_) {}
@@ -363,11 +425,16 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       if (found != null) return found;
     }
 
-    final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: false);
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLinkLocal: false,
+    );
     for (final iface in interfaces) {
       for (final address in iface.addresses) {
         final ip = address.address;
-        if (!(ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.'))) {
+        if (!(ip.startsWith('192.168.') ||
+            ip.startsWith('10.') ||
+            ip.startsWith('172.'))) {
           continue;
         }
 
@@ -405,7 +472,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
     if (baseUrl.isNotEmpty) {
       final canonical = await _probeBaseUrl(baseUrl);
-      if (canonical != null && canonical.isNotEmpty && canonical != _baseUrlController.text.trim()) {
+      if (canonical != null &&
+          canonical.isNotEmpty &&
+          canonical != _baseUrlController.text.trim()) {
         _baseUrlController.text = canonical;
         _connectRealtime();
       }
@@ -436,9 +505,13 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         _lastRefreshAt = DateTime.now();
 
         final availableDeviceIds = devices.map((d) => d.id).toSet();
-        _selectedDeviceIds.removeWhere((id) => !availableDeviceIds.contains(id));
-        if (_selectedDeviceIds.isEmpty && devices.isNotEmpty) _selectedDeviceIds.add(devices.first.id);
-        if (_gridTargetDeviceId != null && !availableDeviceIds.contains(_gridTargetDeviceId!)) {
+        _selectedDeviceIds.removeWhere(
+          (id) => !availableDeviceIds.contains(id),
+        );
+        if (_selectedDeviceIds.isEmpty && devices.isNotEmpty)
+          _selectedDeviceIds.add(devices.first.id);
+        if (_gridTargetDeviceId != null &&
+            !availableDeviceIds.contains(_gridTargetDeviceId!)) {
           _gridTargetDeviceId = null;
           _gridTargetPreviewItems = [];
         }
@@ -448,7 +521,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
         final availableMediaIds = mediaPage.items.map((m) => m.id).toSet();
         _selectedMediaIds.removeWhere((id) => !availableMediaIds.contains(id));
-        _mediaDurations.removeWhere((key, _) => !availableMediaIds.contains(key));
+        _mediaDurations.removeWhere(
+          (key, _) => !availableMediaIds.contains(key),
+        );
       });
       await _loadScreens();
       if (_gridTargetDeviceId != null && _gridTargetPreviewItems.isEmpty) {
@@ -492,12 +567,13 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         _playlistLibrary = [];
         _selectedScreenId = null;
         _selectedPlaylistId = null;
-        _selectedLibraryPlaylistId = null;
+        _bulkPlaylistName = null;
         _deviceNowPlayingName.clear();
         _deviceNowPlayingPlaylistId.clear();
         _deviceGridPreset.clear();
         _devicePlaylistSelection.clear();
         _gridTargetDeviceId = null;
+        _gridTargetTransitionDuration = 1;
         _gridTargetPreviewItems = [];
       });
       return;
@@ -505,10 +581,15 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     try {
       final firstDeviceId = _devices
           .map((d) => d.id)
-          .firstWhere((id) => _selectedDeviceIds.contains(id), orElse: () => _selectedDeviceIds.first);
+          .firstWhere(
+            (id) => _selectedDeviceIds.contains(id),
+            orElse: () => _selectedDeviceIds.first,
+          );
       final screens = await _api.listScreensForDevice(firstDeviceId);
       setState(() {
-        final hasSelected = _selectedScreenId != null && screens.any((s) => s.id == _selectedScreenId);
+        final hasSelected =
+            _selectedScreenId != null &&
+            screens.any((s) => s.id == _selectedScreenId);
         if (!hasSelected) {
           _selectedScreenId = screens.isNotEmpty ? screens.first.id : null;
           _selectedPlaylistId = null;
@@ -527,6 +608,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             _selectedScreenId != null) {
           _screenGridPresets[_selectedScreenId!] = activeScreen.gridPreset!;
         }
+        if (_selectedScreenId != null) {
+          _screenTransitionDurations[_selectedScreenId!] =
+              _sanitizeTransitionDuration(activeScreen?.transitionDurationSec);
+        }
       });
       await _loadPlaylists();
       await _loadPlaylistLibrary();
@@ -540,34 +625,49 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     if (_devices.isEmpty) {
       setState(() {
         _playlistLibrary = [];
-        _selectedLibraryPlaylistId = null;
       });
       return;
     }
     final templates = <_PlaylistTemplate>[];
     for (final device in _devices) {
-      final screens = await _api.listScreensForDevice(device.id);
+      final config = await _api.fetchDeviceConfigRaw(device.id);
+      final rawScreens = (config['screens'] as List<dynamic>? ?? const []);
+      final screens = rawScreens
+          .whereType<Map>()
+          .map((s) => Map<String, dynamic>.from(s.cast<String, dynamic>()))
+          .toList();
       if (screens.isEmpty) continue;
-      final primaryScreenId = screens.first.id;
-      final playlists = await _api.listPlaylists(primaryScreenId);
-      for (final playlist in playlists) {
+
+      final rawPlaylists = (config['playlists'] as List<dynamic>? ?? const []);
+      final playlists = rawPlaylists
+          .whereType<Map>()
+          .map((p) => Map<String, dynamic>.from(p.cast<String, dynamic>()))
+          .toList();
+      for (final map in playlists) {
+        final playlistId = (map['id'] ?? '').toString().trim();
+        final screenId = (map['screen_id'] ?? '').toString().trim();
+        if (playlistId.isEmpty || screenId.isEmpty) continue;
+        final name = (map['name'] ?? '').toString().trim();
+        final isFlashSale = map['is_flash_sale'] == true;
+        final flashNote = (map['flash_note'] ?? '').toString().trim();
+        final flashCountdownSec = (map['flash_countdown_sec'] as num?)?.toInt();
+        final flashItemsJson = (map['flash_items_json'] ?? '').toString();
         templates.add(
           _PlaylistTemplate(
-            playlistId: playlist.id,
-            name: playlist.name,
+            playlistId: playlistId,
+            name: name.isEmpty ? playlistId : name,
             deviceId: device.id,
             deviceName: device.name,
-            screenId: primaryScreenId,
+            isFlashSale: isFlashSale,
+            flashNote: flashNote,
+            flashCountdownSec: flashCountdownSec,
+            flashItemsJson: flashItemsJson,
           ),
         );
       }
     }
     setState(() {
       _playlistLibrary = templates;
-      final hasSelected = _selectedLibraryPlaylistId != null && templates.any((t) => t.playlistId == _selectedLibraryPlaylistId);
-      if (!hasSelected) {
-        _selectedLibraryPlaylistId = templates.isNotEmpty ? templates.first.playlistId : null;
-      }
     });
     _syncDevicePlaylistSelections();
     await _loadManagePlaylistData();
@@ -579,11 +679,17 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       final playlists = await _api.listPlaylists(_selectedScreenId!);
       setState(() {
         _playlists = playlists;
-        final hasSelected = _selectedPlaylistId != null && playlists.any((p) => p.id == _selectedPlaylistId);
+        final hasSelected =
+            _selectedPlaylistId != null &&
+            playlists.any((p) => p.id == _selectedPlaylistId);
         if (!hasSelected) {
-          _selectedPlaylistId = playlists.isNotEmpty ? playlists.first.id : null;
+          _selectedPlaylistId = playlists.isNotEmpty
+              ? playlists.first.id
+              : null;
         }
-        final hasManageSelected = _managePlaylistId != null && playlists.any((p) => p.id == _managePlaylistId);
+        final hasManageSelected =
+            _managePlaylistId != null &&
+            playlists.any((p) => p.id == _managePlaylistId);
         if (!hasManageSelected) {
           _managePlaylistId = playlists.isNotEmpty ? playlists.first.id : null;
         }
@@ -610,7 +716,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
     setState(() => _managePlaylistLoading = true);
     try {
-      final mediaById = <String, MediaInfo>{for (final item in _media) item.id: item};
+      final mediaById = <String, MediaInfo>{
+        for (final item in _media) item.id: item,
+      };
       final itemsRaw = await _api.listPlaylistItems(playlistId);
 
       var playlistName = playlistId;
@@ -633,7 +741,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         final mediaType = media?.type ?? '';
         final mediaName = media?.name.isNotEmpty == true
             ? media!.name
-            : (mediaPath.isEmpty ? mediaId : mediaPath.split('/').last.split('\\').last);
+            : (mediaPath.isEmpty
+                  ? mediaId
+                  : mediaPath.split('/').last.split('\\').last);
         mapped.add(
           _ManagePlaylistItem(
             itemId: itemId,
@@ -647,13 +757,16 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       }
 
       if (_manageSelectedItemIds.isNotEmpty) {
-        _manageSelectedItemIds.removeWhere((itemId) => !mapped.any((row) => row.itemId == itemId));
+        _manageSelectedItemIds.removeWhere(
+          (itemId) => !mapped.any((row) => row.itemId == itemId),
+        );
       }
 
       if (!mounted) return;
       setState(() {
         _managePlaylistNameController.text = playlistName;
-        if (_manageAddMediaId == null || !mediaById.containsKey(_manageAddMediaId)) {
+        if (_manageAddMediaId == null ||
+            !mediaById.containsKey(_manageAddMediaId)) {
           _manageAddMediaId = _media.isNotEmpty ? _media.first.id : null;
         }
         _managePlaylistItems = mapped;
@@ -688,8 +801,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     final isVideo = media.type == 'video' || _isVideoPath(media.path);
     final order = _managePlaylistItems.isEmpty
         ? 1
-        : (_managePlaylistItems.map((item) => item.order).reduce((a, b) => a > b ? a : b) + 1);
-    final duration = int.tryParse(_manageAddDurationController.text.trim()) ?? _durationSec;
+        : (_managePlaylistItems
+                  .map((item) => item.order)
+                  .reduce((a, b) => a > b ? a : b) +
+              1);
+    final duration =
+        int.tryParse(_manageAddDurationController.text.trim()) ?? _durationSec;
     try {
       await _api.addPlaylistItem(
         playlistId: playlistId,
@@ -725,7 +842,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
     try {
       for (var i = 0; i < _managePlaylistItems.length; i++) {
-        await _api.updatePlaylistItem(itemId: _managePlaylistItems[i].itemId, order: i + 1);
+        await _api.updatePlaylistItem(
+          itemId: _managePlaylistItems[i].itemId,
+          order: i + 1,
+        );
       }
       _showMessage('Playlist berhasil diupdate');
       await _loadManagePlaylistData();
@@ -783,8 +903,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         title: const Text('Hapus playlist'),
         content: const Text('Yakin hapus playlist ini?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Batal')),
-          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Hapus')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Hapus'),
+          ),
         ],
       ),
     );
@@ -808,18 +934,25 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   void _syncDevicePlaylistSelections() {
     for (final deviceId in _selectedDeviceIds) {
+      final devicePlaylists = _playlistsForDevice(deviceId);
       final current = _devicePlaylistSelection[deviceId];
-      if (current != null && _playlistLibrary.any((p) => p.playlistId == current)) {
+      if (current != null &&
+          devicePlaylists.any((p) => p.playlistId == current)) {
         continue;
       }
       final nowPlayingId = _deviceNowPlayingPlaylistId[deviceId];
-      if (nowPlayingId != null && _playlistLibrary.any((p) => p.playlistId == nowPlayingId)) {
+      if (nowPlayingId != null &&
+          devicePlaylists.any((p) => p.playlistId == nowPlayingId)) {
         _devicePlaylistSelection[deviceId] = nowPlayingId;
+      } else if (devicePlaylists.isNotEmpty) {
+        _devicePlaylistSelection[deviceId] = devicePlaylists.first.playlistId;
       } else {
-        _devicePlaylistSelection[deviceId] = _selectedLibraryPlaylistId;
+        _devicePlaylistSelection[deviceId] = null;
       }
     }
-    _devicePlaylistSelection.removeWhere((deviceId, _) => !_selectedDeviceIds.contains(deviceId));
+    _devicePlaylistSelection.removeWhere(
+      (deviceId, _) => !_selectedDeviceIds.contains(deviceId),
+    );
   }
 
   int _parseClockMinutes(String value) {
@@ -845,8 +978,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
     final firstScreenRaw = rawScreens.first;
     if (firstScreenRaw is! Map) return playlists.first['id']?.toString();
-    final firstScreen = Map<String, dynamic>.from(firstScreenRaw.cast<String, dynamic>());
-    final forced = (firstScreen['active_playlist_id'] ?? '').toString().trim();
+    final firstScreen = Map<String, dynamic>.from(
+      firstScreenRaw.cast<String, dynamic>(),
+    );
+    return _resolvePlaylistIdForScreen(playlists, firstScreen);
+  }
+
+  String? _resolvePlaylistIdForScreen(
+    List<Map<String, dynamic>> playlists,
+    Map<String, dynamic> screen,
+  ) {
+    if (playlists.isEmpty) return null;
+    final forced = (screen['active_playlist_id'] ?? '').toString().trim();
     if (forced.isNotEmpty && playlists.any((p) => '${p['id']}' == forced)) {
       return forced;
     }
@@ -854,18 +997,23 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     final now = DateTime.now();
     final nowMinutes = now.hour * 60 + now.minute;
     final day = now.weekday % 7;
-    final schedules = (firstScreen['schedules'] as List<dynamic>? ?? const [])
+    final schedules = (screen['schedules'] as List<dynamic>? ?? const [])
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e.cast<String, dynamic>()))
         .toList();
     for (final schedule in schedules) {
       if ((schedule['day_of_week'] as num?)?.toInt() != day) continue;
-      final start = _parseClockMinutes((schedule['start_time'] ?? '').toString());
+      final start = _parseClockMinutes(
+        (schedule['start_time'] ?? '').toString(),
+      );
       final end = _parseClockMinutes((schedule['end_time'] ?? '').toString());
       if (start < 0 || end < 0) continue;
       if (nowMinutes >= start && nowMinutes < end) {
-        final schedulePlaylistId = (schedule['playlist_id'] ?? '').toString().trim();
-        if (schedulePlaylistId.isNotEmpty && playlists.any((p) => '${p['id']}' == schedulePlaylistId)) {
+        final schedulePlaylistId = (schedule['playlist_id'] ?? '')
+            .toString()
+            .trim();
+        if (schedulePlaylistId.isNotEmpty &&
+            playlists.any((p) => '${p['id']}' == schedulePlaylistId)) {
           return schedulePlaylistId;
         }
       }
@@ -908,7 +1056,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           names[deviceId] = 'No playlist';
           continue;
         }
-        final rawPlaylists = (config['playlists'] as List<dynamic>? ?? const []);
+        final rawPlaylists =
+            (config['playlists'] as List<dynamic>? ?? const []);
         String label = playlistId;
         for (final item in rawPlaylists) {
           if (item is Map && '${item['id']}' == playlistId) {
@@ -950,7 +1099,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           .pickFiles(
             allowMultiple: true,
             type: FileType.custom,
-            allowedExtensions: [..._videoExtensions, ..._imageExtensions].map((e) => e.replaceFirst('.', '')).toList(),
+            allowedExtensions: [
+              ..._videoExtensions,
+              ..._imageExtensions,
+            ].map((e) => e.replaceFirst('.', '')).toList(),
           )
           .timeout(const Duration(seconds: 25));
     } on TimeoutException {
@@ -964,7 +1116,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       return;
     }
     if (result == null || result.files.isEmpty) return;
-    final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).toList();
+    final files = result.files
+        .where((f) => f.path != null)
+        .map((f) => File(f.path!))
+        .toList();
     if (files.isEmpty) return;
     _setSelectedFilesWithFilter(files, source: 'picker');
   }
@@ -1044,108 +1199,685 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
-  List<MediaInfo> _filteredMediaForFlashSale() {
-    final query = _flashSaleMediaQueryController.text.trim().toLowerCase();
-    return _media.where((m) {
-      final isVideo = m.type == 'video' || _isVideoPath(m.path);
-      final isImage = m.type == 'image' || _isImagePath(m.path);
-      if (_flashSaleMediaFilter == 'video' && !isVideo) return false;
-      if (_flashSaleMediaFilter == 'image' && !isImage) return false;
-      if (query.isEmpty) return true;
-      return m.name.toLowerCase().contains(query) || m.path.toLowerCase().contains(query);
-    }).toList();
+  List<int> _flashSaleCountdownPresetSeconds() {
+    return const [300, 600, 900, 1800, 3600];
+  }
+
+  String _flashSaleCountdownLabel(int seconds) {
+    if (seconds % 3600 == 0) {
+      final h = seconds ~/ 3600;
+      return '$h jam';
+    }
+    if (seconds % 60 == 0) {
+      final m = seconds ~/ 60;
+      return '$m menit';
+    }
+    return '$seconds detik';
   }
 
   List<DeviceInfo> _flashSaleLandscapeDevices() {
-    return _devices.where((device) => (device.orientation ?? 'portrait') == 'landscape').toList();
+    return _devices
+        .where((device) => (device.orientation ?? 'portrait') == 'landscape')
+        .toList();
   }
 
-  String _flashSalePlaylistName() {
-    final base = _flashSaleNameController.text.trim();
-    final ts = DateTime.now();
-    final stamp =
-        '${ts.year}${ts.month.toString().padLeft(2, '0')}${ts.day.toString().padLeft(2, '0')}-${ts.hour.toString().padLeft(2, '0')}${ts.minute.toString().padLeft(2, '0')}';
-    if (base.isEmpty) return 'FlashSale-$stamp';
-    return 'FlashSale-$base-$stamp';
+  String _normalizedText(String value) => value.trim().toLowerCase();
+
+  List<_PlaylistTemplate> _flashSalePlaylists() {
+    final rows = _playlistLibrary.where((item) => item.isFlashSale).toList();
+    rows.sort((a, b) => b.name.toLowerCase().compareTo(a.name.toLowerCase()));
+    return rows;
   }
 
-  Future<void> _runFlashSale({required bool scheduleOnly}) async {
+  List<String> _flashSaleSourcePlaylistOptions() {
+    final names = <String>{};
+    for (final item in _playlistLibrary) {
+      final value = item.name.trim();
+      if (value.isEmpty) continue;
+      names.add(value);
+    }
+    final result = names.toList();
+    result.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return result;
+  }
+
+  _PlaylistTemplate? _findFlashSaleSourceTemplate() {
+    final target = (_flashSaleSourcePlaylistName ?? '').trim();
+    if (target.isEmpty) return null;
+    for (final item in _playlistLibrary) {
+      if (_normalizedText(item.name) == _normalizedText(target)) return item;
+    }
+    return null;
+  }
+
+  List<MediaInfo> _flashSaleMediaOptions() {
+    final rows = [..._media];
+    rows.sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+    return rows;
+  }
+
+  String _flashSaleMediaLabelById(String? mediaId) {
+    final id = (mediaId ?? '').trim();
+    if (id.isEmpty) return 'Media belum dipilih';
+    for (final media in _media) {
+      if (media.id == id) {
+        final name = media.name.trim().isEmpty ? media.id : media.name.trim();
+        return '$name (${media.type})';
+      }
+    }
+    return '$id (media tidak ditemukan di list saat ini)';
+  }
+
+  void _prefillFlashSaleMetaFromTemplate(_PlaylistTemplate template) {
+    if (template.flashNote.trim().isNotEmpty) {
+      _flashSaleNoteController.text = template.flashNote.trim();
+    }
+    if ((template.flashCountdownSec ?? 0) > 0) {
+      _flashSaleCountdownController.text = '${template.flashCountdownSec}';
+    }
+    final raw = template.flashItemsJson.trim();
+    if (raw.isNotEmpty) {
+      _applyFlashProductsFromJson(raw);
+    }
+    _resetFlashSaleMediaCheckStatus();
+  }
+
+  Future<void> _ensurePlaylistFlashSale(_PlaylistTemplate template) async {
+    if (template.isFlashSale) return;
+    await _api.updatePlaylistFlashSale(template.playlistId, true);
+  }
+
+  int? _flashSaleCountdownFromInput() {
+    final value = int.tryParse(_flashSaleCountdownController.text.trim());
+    if (value == null || value <= 0) return null;
+    return value;
+  }
+
+  String _flashSaleNoteFromInput() => _flashSaleNoteController.text.trim();
+
+  bool _validateFlashSaleMetaInput() {
+    final note = _flashSaleNoteFromInput();
+    if (note.isEmpty) {
+      _showMessage('Note Flash Sale wajib diisi untuk running text mobile');
+      return false;
+    }
+    final countdown = _flashSaleCountdownFromInput();
+    if (countdown == null) {
+      _showMessage('Countdown Flash Sale wajib diisi (detik) dan > 0');
+      return false;
+    }
+    final productRows = _flashSaleProducts
+        .map((item) => item.toJson())
+        .where((item) => (item['name'] ?? '').toString().trim().isNotEmpty)
+        .toList();
+    if (productRows.isEmpty) {
+      _showMessage('Tambahkan minimal 1 produk Flash Sale');
+      return false;
+    }
+    for (var i = 0; i < productRows.length; i += 1) {
+      final mediaId = (productRows[i]['media_id'] ?? '').toString().trim();
+      if (mediaId.isEmpty) {
+        _showMessage('Media produk #${i + 1} wajib dipilih');
+        return false;
+      }
+    }
+    _flashSaleCountdownController.text = countdown.toString();
+    return true;
+  }
+
+  String _flashSaleProductsJson() {
+    final rows = _flashSaleProducts
+        .map((item) => item.toJson())
+        .where((item) => (item['name'] ?? '').toString().trim().isNotEmpty)
+        .toList();
+    return jsonEncode(rows);
+  }
+
+  void _applyFlashProductsFromJson(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final next = <_FlashSaleProductDraft>[];
+      for (final row in decoded) {
+        if (row is! Map) continue;
+        final name = (row['name'] ?? '').toString();
+        final brand = (row['brand'] ?? '').toString();
+        final normalPrice = (row['normal_price'] ?? '').toString();
+        final promoPrice = (row['promo_price'] ?? '').toString();
+        final stock = (row['stock'] ?? '').toString();
+        final mediaId = (row['media_id'] ?? '').toString();
+        next.add(
+          _FlashSaleProductDraft(
+            name: name,
+            brand: brand,
+            normalPrice: normalPrice,
+            promoPrice: promoPrice,
+            stock: stock,
+            mediaId: mediaId,
+          ),
+        );
+      }
+      if (next.isEmpty) return;
+      _flashSaleProducts
+        ..clear()
+        ..addAll(next);
+    } catch (_) {}
+  }
+
+  Future<void> _editFlashSaleProduct(int index) async {
+    if (index < 0 || index >= _flashSaleProducts.length) return;
+    final current = _flashSaleProducts[index];
+    final nameController = TextEditingController(text: current.name);
+    final brandController = TextEditingController(text: current.brand);
+    final normalPriceController = TextEditingController(
+      text: current.normalPrice,
+    );
+    final promoPriceController = TextEditingController(
+      text: current.promoPrice,
+    );
+    final stockController = TextEditingController(text: current.stock);
+    final mediaOptions = _flashSaleMediaOptions();
+    String selectedMediaId = current.mediaId.trim();
+    final mediaExists = mediaOptions.any((item) => item.id == selectedMediaId);
+    if (selectedMediaId.isNotEmpty && !mediaExists) {
+      selectedMediaId = '';
+    }
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: Text('Edit Produk ${index + 1}'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nama produk',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: brandController,
+                        decoration: const InputDecoration(labelText: 'Brand'),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: selectedMediaId.isEmpty
+                            ? null
+                            : selectedMediaId,
+                        hint: const Text('Pilih media untuk produk ini'),
+                        items: mediaOptions
+                            .map(
+                              (media) => DropdownMenuItem(
+                                value: media.id,
+                                child: Text(
+                                  '${media.name.isEmpty ? media.id : media.name} (${media.type})',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          setLocalState(() => selectedMediaId = value ?? '');
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: normalPriceController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Harga normal (angka, contoh 129000)',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: promoPriceController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Harga promo (angka, contoh 79000)',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: stockController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Stok tersisa (angka)',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (saved != true) return;
+    setState(() {
+      _flashSaleProducts[index] = _FlashSaleProductDraft(
+        name: nameController.text.trim(),
+        brand: brandController.text.trim(),
+        normalPrice: normalPriceController.text.trim(),
+        promoPrice: promoPriceController.text.trim(),
+        stock: stockController.text.trim(),
+        mediaId: selectedMediaId.trim(),
+      );
+      _resetFlashSaleMediaCheckStatus();
+    });
+  }
+
+  List<String> _flashSaleTargetDeviceIds() {
+    final landscapeDeviceIds = _flashSaleLandscapeDevices()
+        .map((device) => device.id)
+        .toSet();
+    return _flashSaleDeviceIds.where(landscapeDeviceIds.contains).toList();
+  }
+
+  Set<String> _flashSaleProductMediaIds() {
+    return _flashSaleProducts
+        .map((item) => item.mediaId.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  void _resetFlashSaleMediaCheckStatus() {
+    _flashSaleMediaCheckedAt = null;
+    _flashSaleMissingMediaByDevice.clear();
+    _flashSaleMediaErrorByDevice.clear();
+  }
+
+  Future<void> _checkFlashSaleMediaSyncStatus() async {
+    if (_flashSaleMediaCheckBusy) return;
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device target untuk cek sinkron media');
+      return;
+    }
+    final requiredMediaIds = _flashSaleProductMediaIds();
+    if (requiredMediaIds.isEmpty) {
+      _showMessage('Pilih media pada produk Flash Sale dulu');
+      return;
+    }
+
+    setState(() {
+      _flashSaleMediaCheckBusy = true;
+      _flashSaleMissingMediaByDevice.clear();
+      _flashSaleMediaErrorByDevice.clear();
+    });
+
+    try {
+      for (final deviceId in targetDeviceIds) {
+        try {
+          final config = await _api.fetchDeviceConfigRaw(deviceId);
+          final mediaRaw = (config['media'] as List<dynamic>? ?? const []);
+          final mediaIds = <String>{};
+          for (final row in mediaRaw) {
+            if (row is! Map) continue;
+            final id = '${row['id']}'.trim();
+            if (id.isNotEmpty) mediaIds.add(id);
+          }
+          final missing = requiredMediaIds.where((id) => !mediaIds.contains(id));
+          _flashSaleMissingMediaByDevice[deviceId] = missing
+              .map(_flashSaleMediaLabelById)
+              .toList();
+        } catch (e) {
+          _flashSaleMediaErrorByDevice[deviceId] = e.toString();
+        }
+      }
+      _flashSaleMediaCheckedAt = DateTime.now();
+    } finally {
+      if (mounted) setState(() => _flashSaleMediaCheckBusy = false);
+    }
+  }
+
+  Future<void> _runFlashSaleNow() async {
     if (_flashSaleBusy) return;
-    final landscapeDeviceIds = _flashSaleLandscapeDevices().map((device) => device.id).toSet();
-    final targetDeviceIds = _flashSaleDeviceIds.where(landscapeDeviceIds.contains).toList();
+    if (!_validateFlashSaleMetaInput()) return;
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
     if (targetDeviceIds.isEmpty) {
       _showMessage('Pilih minimal satu device untuk Flash Sale');
-      return;
-    }
-    if (_flashSaleMediaIds.isEmpty) {
-      _showMessage('Pilih minimal satu media untuk Flash Sale');
-      return;
-    }
-    final startTime = _formatHms(_flashSaleStartController.text);
-    final endTime = _formatHms(_flashSaleEndController.text);
-    if (startTime.isEmpty || endTime.isEmpty) {
-      _showMessage('Format waktu harus HH:MM atau HH:MM:SS');
-      return;
-    }
-    if (_flashSaleDays.isEmpty) {
-      _showMessage('Pilih minimal satu hari untuk jadwal Flash Sale');
       return;
     }
 
     setState(() => _flashSaleBusy = true);
     try {
+      final note = _flashSaleNoteFromInput();
+      final countdownSec = _flashSaleCountdownFromInput() ?? 0;
+      final productsJson = _flashSaleProductsJson();
+      final failed = <String>[];
       for (final deviceId in targetDeviceIds) {
-        final screens = await _api.listScreensForDevice(deviceId);
-        if (screens.isEmpty) continue;
-        final screen = screens.first;
-        final playlist = await _api.createPlaylist(screen.id, _flashSalePlaylistName());
-        var order = 1;
-        for (final mediaId in _flashSaleMediaIds) {
-          MediaInfo? media;
-          for (final m in _media) {
-            if (m.id == mediaId) {
-              media = m;
-              break;
-            }
-          }
-          if (media == null) continue;
-          final isVideo = media.type == 'video' || _isVideoPath(media.path);
-          final duration = _flashSaleMediaDurations[mediaId] ?? _durationSec;
-          await _api.addPlaylistItem(
-            playlistId: playlist.id,
-            mediaId: media.id,
-            order: order,
-            durationSec: isVideo ? null : duration,
+        try {
+          await _api.upsertFlashSaleNow(
+            deviceId: deviceId,
+            note: note,
+            countdownSec: countdownSec,
+            productsJson: productsJson,
           );
-          order += 1;
-        }
-
-        if (!scheduleOnly) {
-          await _api.updateScreenSettings(
-            screenId: screen.id,
-            activePlaylistId: playlist.id,
-            gridPreset: _flashSaleGridPreset,
-          );
-        }
-
-        for (final day in _flashSaleDays) {
-          await _api.createSchedule(
-            screenId: screen.id,
-            playlistId: playlist.id,
-            dayOfWeek: day,
-            startTime: startTime,
-            endTime: endTime,
-          );
+        } catch (_) {
+          failed.add(deviceId);
         }
       }
 
-      _showMessage(scheduleOnly ? 'Flash Sale berhasil dijadwalkan' : 'Flash Sale berhasil ditayangkan + dijadwalkan');
-      await _loadPlaylistLibrary();
+      if (failed.isEmpty) {
+        _showMessage('Flash Sale berhasil ditayangkan sekarang');
+      } else {
+        _showMessage(
+          'Sebagian gagal tayang. Device gagal: ${failed.join(', ')}',
+        );
+      }
       await _refreshNowPlayingForSelectedDevices();
     } catch (e) {
       _showMessage(e.toString());
     } finally {
       if (mounted) setState(() => _flashSaleBusy = false);
+    }
+  }
+
+  Future<void> _openScheduleFlashSaleDialog() async {
+    if (_flashSaleBusy) return;
+    if (!_validateFlashSaleMetaInput()) return;
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device untuk Flash Sale');
+      return;
+    }
+
+    final dayLabels = <int, String>{
+      1: 'Sen',
+      2: 'Sel',
+      3: 'Rab',
+      4: 'Kam',
+      5: 'Jum',
+      6: 'Sab',
+      0: 'Min',
+    };
+    final selectedDays = <int>{..._flashSaleScheduleDays};
+    final startController = TextEditingController(
+      text: _flashSaleScheduleStartController.text,
+    );
+    final endController = TextEditingController(
+      text: _flashSaleScheduleEndController.text,
+    );
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: const Text('Jadwalkan Flash Sale'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Atur hari dan jam tayang. Countdown mengikuti nilai Flash Sale.',
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: dayLabels.entries.map((entry) {
+                          final selected = selectedDays.contains(entry.key);
+                          return FilterChip(
+                            label: Text(entry.value),
+                            selected: selected,
+                            onSelected: (value) {
+                              setLocalState(() {
+                                if (value) {
+                                  selectedDays.add(entry.key);
+                                } else {
+                                  selectedDays.remove(entry.key);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: startController,
+                              decoration: const InputDecoration(
+                                labelText: 'Jam mulai (HH:MM)',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: endController,
+                              decoration: const InputDecoration(
+                                labelText: 'Jam selesai (HH:MM)',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Simpan Jadwal'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (confirmed != true) return;
+
+    _flashSaleScheduleStartController.text = startController.text;
+    _flashSaleScheduleEndController.text = endController.text;
+    _flashSaleScheduleDays
+      ..clear()
+      ..addAll(selectedDays);
+
+    final startTime = _formatHms(_flashSaleScheduleStartController.text);
+    final endTime = _formatHms(_flashSaleScheduleEndController.text);
+    if (startTime.isEmpty || endTime.isEmpty) {
+      _showMessage('Format waktu harus HH:MM atau HH:MM:SS');
+      return;
+    }
+    if (_flashSaleScheduleDays.isEmpty) {
+      _showMessage('Pilih minimal satu hari jadwal');
+      return;
+    }
+
+    setState(() => _flashSaleBusy = true);
+    try {
+      final note = _flashSaleNoteFromInput();
+      final countdownSec = _flashSaleCountdownFromInput() ?? 0;
+      final productsJson = _flashSaleProductsJson();
+      final daysCsv = _flashSaleScheduleDays.toList()..sort();
+      final failed = <String>[];
+      for (final deviceId in targetDeviceIds) {
+        try {
+          await _api.upsertFlashSaleSchedule(
+            deviceId: deviceId,
+            note: note,
+            countdownSec: countdownSec,
+            productsJson: productsJson,
+            scheduleDaysCsv: daysCsv.join(','),
+            startTime: startTime,
+            endTime: endTime,
+          );
+        } catch (_) {
+          failed.add(deviceId);
+        }
+      }
+      if (failed.isEmpty) {
+        _showMessage('Flash Sale berhasil dijadwalkan');
+      } else {
+        _showMessage(
+          'Sebagian jadwal gagal. Device gagal: ${failed.join(', ')}',
+        );
+      }
+      await _refreshNowPlayingForSelectedDevices();
+    } catch (e) {
+      _showMessage(e.toString());
+    } finally {
+      if (mounted) setState(() => _flashSaleBusy = false);
+    }
+  }
+
+  Future<void> _disableFlashSaleForTargets() async {
+    if (_flashSaleBusy) return;
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device untuk menonaktifkan Flash Sale');
+      return;
+    }
+    setState(() => _flashSaleBusy = true);
+    try {
+      final failed = <String>[];
+      for (final deviceId in targetDeviceIds) {
+        try {
+          await _api.disableFlashSale(deviceId);
+        } catch (_) {
+          failed.add(deviceId);
+        }
+      }
+      if (failed.isEmpty) {
+        _showMessage('Flash Sale dinonaktifkan di semua device terpilih');
+      } else {
+        _showMessage('Sebagian gagal menonaktifkan Flash Sale: ${failed.join(', ')}');
+      }
+    } finally {
+      if (mounted) setState(() => _flashSaleBusy = false);
+    }
+  }
+
+  Future<void> _deleteFlashSalePlaylist(_PlaylistTemplate template) async {
+    if (_flashSaleCleanupBusy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Hapus Flash Sale'),
+          content: Text(
+            'Hapus playlist "${template.name}" di device "${template.deviceName}"?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Hapus'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+
+    setState(() => _flashSaleCleanupBusy = true);
+    try {
+      await _api.deletePlaylist(template.playlistId);
+      _showMessage('Flash Sale dihapus');
+      await _loadPlaylistLibrary();
+      await _refreshNowPlayingForSelectedDevices();
+    } catch (e) {
+      _showMessage(e.toString());
+    } finally {
+      if (mounted) setState(() => _flashSaleCleanupBusy = false);
+    }
+  }
+
+  Future<void> _deleteSelectedFlashSalePlaylists() async {
+    if (_flashSaleCleanupBusy) return;
+    if (_selectedFlashSalePlaylistIds.isEmpty) {
+      _showMessage('Pilih minimal satu playlist Flash Sale');
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Hapus Flash Sale Terpilih'),
+          content: Text(
+            'Hapus ${_selectedFlashSalePlaylistIds.length} playlist Flash Sale yang dipilih?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Hapus Semua'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+
+    setState(() => _flashSaleCleanupBusy = true);
+    try {
+      var deleted = 0;
+      final failed = <String>[];
+      final ids = _selectedFlashSalePlaylistIds.toList();
+      for (final playlistId in ids) {
+        try {
+          await _api.deletePlaylist(playlistId);
+          deleted += 1;
+        } catch (_) {
+          failed.add(playlistId);
+        }
+      }
+      _selectedFlashSalePlaylistIds.clear();
+      await _loadPlaylistLibrary();
+      await _refreshNowPlayingForSelectedDevices();
+      if (failed.isEmpty) {
+        _showMessage('$deleted Flash Sale berhasil dihapus');
+      } else {
+        _showMessage('$deleted Flash Sale dihapus, gagal ${failed.length}');
+      }
+    } catch (e) {
+      _showMessage(e.toString());
+    } finally {
+      if (mounted) setState(() => _flashSaleCleanupBusy = false);
     }
   }
 
@@ -1164,7 +1896,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       for (final file in _selectedFiles) {
         final type = _mediaType == 'auto' ? _inferType(file) : _mediaType;
         if (type == null) {
-          _showMessage('Tipe file tidak dikenali: ${file.uri.pathSegments.last}');
+          _showMessage(
+            'Tipe file tidak dikenali: ${file.uri.pathSegments.last}',
+          );
           continue;
         }
         await _api.uploadMedia(
@@ -1192,7 +1926,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   Future<String?> _promptPlaylistName() async {
-    final controller = TextEditingController(text: 'Playlist-${DateTime.now().millisecondsSinceEpoch}');
+    final controller = TextEditingController(
+      text: 'Playlist-${DateTime.now().millisecondsSinceEpoch}',
+    );
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) {
@@ -1204,8 +1940,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             autofocus: true,
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(controller.text.trim()), child: const Text('Create')),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+              child: const Text('Create'),
+            ),
           ],
         );
       },
@@ -1238,7 +1980,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             break;
           }
         }
-        final isVideo = media != null && (media.type == 'video' || _isVideoPath(media.path));
+        final isVideo =
+            media != null &&
+            (media.type == 'video' || _isVideoPath(media.path));
         final duration = _mediaDurations[mediaId] ?? _durationSec;
         await _api.addPlaylistItem(
           playlistId: playlist.id,
@@ -1257,99 +2001,105 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
-
-  Future<void> _assignLibraryPlaylistToSelectedDevices() async {
-    if (_selectedDeviceIds.isEmpty) {
-      _showMessage('Pilih minimal satu device');
-      return;
-    }
-    if (_selectedLibraryPlaylistId == null) {
-      _showMessage('Pilih playlist dari library');
-      return;
-    }
-
-    _PlaylistTemplate? sourceTemplate;
-    for (final template in _playlistLibrary) {
-      if (template.playlistId == _selectedLibraryPlaylistId) {
-        sourceTemplate = template;
-        break;
-      }
-    }
-    if (sourceTemplate == null) {
-      _showMessage('Playlist source tidak ditemukan');
-      return;
-    }
-
-    try {
-      for (final deviceId in _selectedDeviceIds) {
-        await _applyTemplateToDevice(
-          template: sourceTemplate,
-          targetDeviceId: deviceId,
-        );
-      }
-      _showMessage('Playlist ditayangkan ke device terpilih. Grid tetap mengikuti setting device (gunakan Apply Grid untuk mengubah).');
-      await _loadPlaylists();
-      await _loadPlaylistLibrary();
-      await _refreshNowPlayingForSelectedDevices();
-    } catch (e) {
-      _showMessage(e.toString());
-    }
-  }
-
-  Future<void> _applyTemplateToDevice({
+  Future<_AppliedPlaylistTarget> _applyTemplateToDevice({
     required _PlaylistTemplate template,
     required String targetDeviceId,
+    bool createIfMissing = false,
+    bool markAsFlashSale = false,
+    String? flashNote,
+    int? flashCountdownSec,
+    String? flashItemsJson,
   }) async {
-    final sourceConfig = await _api.fetchDeviceConfigRaw(template.deviceId);
-    final rawPlaylists = sourceConfig['playlists'];
-    if (rawPlaylists is! List) {
-      throw Exception('Data playlist source tidak valid');
-    }
-
-    Map<String, dynamic>? sourcePlaylist;
-    for (final item in rawPlaylists) {
-      if (item is Map && '${item['id']}' == template.playlistId) {
-        sourcePlaylist = Map<String, dynamic>.from(item.cast<String, dynamic>());
-        break;
-      }
-    }
-    if (sourcePlaylist == null) {
-      throw Exception('Playlist source tidak ada pada konfigurasi device');
-    }
-    final rawItems = sourcePlaylist['items'];
-    if (rawItems is! List || rawItems.isEmpty) {
-      throw Exception('Playlist source tidak memiliki item');
-    }
-
-    final items = rawItems
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e.cast<String, dynamic>()))
-        .toList()
-      ..sort((a, b) => ((a['order'] as num?)?.toInt() ?? 0).compareTo((b['order'] as num?)?.toInt() ?? 0));
-
+    final templateNameNormalized = _normalizedText(template.name);
     final screens = await _api.listScreensForDevice(targetDeviceId);
     if (screens.isEmpty) {
       throw Exception('Device $targetDeviceId tidak punya screen');
     }
-    final targetScreen = screens.first;
-    final newPlaylist = await _api.createPlaylist(targetScreen.id, template.name);
+    String? foundScreenId;
+    String? foundPlaylistId;
 
-    var nextOrder = 1;
-    for (final item in items) {
-      final mediaId = '${item['media_id']}'.trim();
-      if (mediaId.isEmpty) continue;
-      final duration = (item['duration_sec'] as num?)?.toInt();
-      await _api.addPlaylistItem(
-        playlistId: newPlaylist.id,
-        mediaId: mediaId,
-        order: nextOrder,
-        durationSec: duration,
-      );
-      nextOrder += 1;
+    // Same-device apply: prioritise exact playlist id match across all screens.
+    if (template.deviceId == targetDeviceId) {
+      for (final screen in screens) {
+        final targetPlaylists = await _api.listPlaylists(screen.id);
+        for (final playlist in targetPlaylists) {
+          if (playlist.id == template.playlistId) {
+            foundScreenId = screen.id;
+            foundPlaylistId = playlist.id;
+            break;
+          }
+        }
+        if (foundPlaylistId != null) break;
+      }
     }
+
+    // Cross-device apply: match by playlist name across all screens.
+    if (foundPlaylistId == null) {
+      final targetName = templateNameNormalized;
+      for (final screen in screens) {
+        final targetPlaylists = await _api.listPlaylists(screen.id);
+        for (final playlist in targetPlaylists) {
+          if (_normalizedText(playlist.name) == targetName) {
+            foundScreenId = screen.id;
+            foundPlaylistId = playlist.id;
+            break;
+          }
+        }
+        if (foundPlaylistId != null) break;
+      }
+    }
+
+    if (foundScreenId == null || foundPlaylistId == null) {
+      if (!createIfMissing) {
+        throw Exception(
+          'Playlist "${template.name}" belum ada di device target.',
+        );
+      }
+      final targetScreen = screens.first;
+      final created = await _api.createPlaylist(
+        targetScreen.id,
+        template.name,
+        isFlashSale: markAsFlashSale || template.isFlashSale,
+      );
+      final sourceItems = await _api.listPlaylistItems(template.playlistId);
+      var nextOrder = 1;
+      for (final item in sourceItems) {
+        await _api.addPlaylistItem(
+          playlistId: created.id,
+          mediaId: item.mediaId,
+          order: nextOrder,
+          durationSec: item.durationSec,
+        );
+        nextOrder += 1;
+      }
+      foundScreenId = targetScreen.id;
+      foundPlaylistId = created.id;
+    }
+
+    if (markAsFlashSale) {
+      final normalizedFlashNote = (flashNote ?? template.flashNote).trim();
+      final normalizedFlashItems =
+          (flashItemsJson ?? template.flashItemsJson).trim();
+      await _api.updatePlaylistFlashSale(foundPlaylistId, true);
+      await _api.updatePlaylistFlashMeta(
+        foundPlaylistId,
+        note: normalizedFlashNote,
+        countdownSec:
+            flashCountdownSec ??
+            ((template.flashCountdownSec ?? 0) > 0
+                ? template.flashCountdownSec
+                : 0),
+        flashItemsJson: normalizedFlashItems,
+      );
+    }
+
     await _api.updateScreenSettings(
-      screenId: targetScreen.id,
-      activePlaylistId: newPlaylist.id,
+      screenId: foundScreenId,
+      activePlaylistId: foundPlaylistId,
+    );
+    return _AppliedPlaylistTarget(
+      screenId: foundScreenId,
+      playlistId: foundPlaylistId,
     );
   }
 
@@ -1359,6 +2109,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       return;
     }
     try {
+      final failed = <String>[];
       for (final deviceId in _selectedDeviceIds) {
         final templateId = _devicePlaylistSelection[deviceId];
         if (templateId == null || templateId.isEmpty) continue;
@@ -1370,16 +2121,96 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           }
         }
         if (template == null) continue;
-        await _applyTemplateToDevice(
-          template: template,
-          targetDeviceId: deviceId,
+        try {
+          await _applyTemplateToDevice(
+            template: template,
+            targetDeviceId: deviceId,
+          );
+        } catch (_) {
+          failed.add(deviceId);
+        }
+      }
+      if (failed.isEmpty) {
+        _showMessage(
+          'Playlist per device berhasil diterapkan. Grid tidak berubah.',
+        );
+      } else {
+        _showMessage(
+          'Sebagian gagal. Playlist dengan nama yang sama belum ada di: ${failed.join(', ')}',
         );
       }
-      _showMessage('Playlist per device berhasil diterapkan. Grid tidak berubah sampai tombol Apply Grid dijalankan.');
       await _loadPlaylistLibrary();
       await _refreshNowPlayingForSelectedDevices();
     } catch (e) {
       _showMessage(e.toString());
+    }
+  }
+
+  List<_PlaylistTemplate> _playlistsForDevice(String deviceId) {
+    return _playlistLibrary.where((p) => p.deviceId == deviceId).toList();
+  }
+
+  List<String> _bulkPlaylistNameOptions() {
+    final names = <String>{};
+    for (final deviceId in _selectedDeviceIds) {
+      final playlists = _playlistsForDevice(deviceId);
+      for (final playlist in playlists) {
+        final value = playlist.name.trim();
+        if (value.isNotEmpty) names.add(value);
+      }
+    }
+    final result = names.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return result;
+  }
+
+  Future<void> _applySamePlaylistToSelectedDevices() async {
+    if (_selectedDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device');
+      return;
+    }
+    final playlistName = (_bulkPlaylistName ?? '').trim();
+    if (playlistName.isEmpty) {
+      _showMessage('Pilih playlist yang akan diterapkan');
+      return;
+    }
+
+    _PlaylistTemplate? sourceTemplate;
+    for (final item in _playlistLibrary) {
+      if (_normalizedText(item.name) == _normalizedText(playlistName)) {
+        sourceTemplate = item;
+        break;
+      }
+    }
+    if (sourceTemplate == null) {
+      _showMessage('Playlist sumber tidak ditemukan');
+      return;
+    }
+
+    final failed = <String>[];
+    for (final deviceId in _selectedDeviceIds) {
+      try {
+        await _applyTemplateToDevice(
+          template: sourceTemplate,
+          targetDeviceId: deviceId,
+          createIfMissing: true,
+        );
+      } catch (_) {
+        failed.add(deviceId);
+      }
+    }
+
+    await _loadPlaylistLibrary();
+    await _refreshNowPlayingForSelectedDevices();
+
+    if (failed.isEmpty) {
+      _showMessage(
+        'Playlist "$playlistName" berhasil diterapkan ke semua device terpilih.',
+      );
+    } else {
+      _showMessage(
+        'Sebagian gagal menerapkan "$playlistName". Device gagal: ${failed.join(', ')}',
+      );
     }
   }
 
@@ -1391,8 +2222,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           title: const Text('Hapus media'),
           content: Text('Yakin hapus media "${media.name}"?'),
           actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Batal')),
-            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Hapus')),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Hapus'),
+            ),
           ],
         );
       },
@@ -1412,10 +2249,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   String _absoluteUrl(String path) {
     if (path.startsWith('http')) return path;
     return Uri.parse(_baseUrlController.text.trim()).resolve(path).toString();
-  }
-
-  List<String> _gridPresetOptions() {
-    return const ['1x1', '1x2', '2x1', '2x2', '3x3', '4x4'];
   }
 
   String _gridPresetLabel(String preset) {
@@ -1447,7 +2280,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     return parts.length == 2 ? int.tryParse(parts[1]) ?? 1 : 1;
   }
 
-  List<_GridPreviewItem> _gridItemsForCellFromSource(List<_GridPreviewItem> source, int cellIndex, int cellCount) {
+  int _sanitizeTransitionDuration(int? value) {
+    final raw = value ?? 1;
+    if (raw < 0) return 0;
+    if (raw > 30) return 30;
+    return raw;
+  }
+
+  List<_GridPreviewItem> _gridItemsForCellFromSource(
+    List<_GridPreviewItem> source,
+    int cellIndex,
+    int cellCount,
+  ) {
     if (source.isEmpty) return const [];
     if (cellCount <= 1) return source;
     final total = source.length;
@@ -1471,8 +2315,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         const spacing = 3.0;
         final totalHSpace = (cols - 1) * spacing;
         final totalVSpace = (rows - 1) * spacing;
-        final tileWidth = ((constraints.maxWidth - totalHSpace) / cols).clamp(14.0, constraints.maxWidth);
-        final tileHeight = ((constraints.maxHeight - totalVSpace) / rows).clamp(14.0, constraints.maxHeight);
+        final tileWidth = ((constraints.maxWidth - totalHSpace) / cols).clamp(
+          14.0,
+          constraints.maxWidth,
+        );
+        final tileHeight = ((constraints.maxHeight - totalVSpace) / rows).clamp(
+          14.0,
+          constraints.maxHeight,
+        );
 
         return Wrap(
           spacing: spacing,
@@ -1495,20 +2345,33 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       children: [
                         if (items[i].type.toLowerCase() == 'video')
                           const Center(
-                            child: Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 18),
+                            child: Icon(
+                              Icons.play_circle_fill_rounded,
+                              color: Colors.white70,
+                              size: 18,
+                            ),
                           )
                         else
                           Image.network(
                             _absoluteUrl(items[i].path),
                             fit: BoxFit.contain,
                             errorBuilder: (context, error, stackTrace) =>
-                                const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white70, size: 14)),
+                                const Center(
+                                  child: Icon(
+                                    Icons.broken_image_outlined,
+                                    color: Colors.white70,
+                                    size: 14,
+                                  ),
+                                ),
                           ),
                         Positioned(
                           top: 1,
                           left: 1,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 3,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.7),
                               borderRadius: BorderRadius.circular(3),
@@ -1543,14 +2406,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       children: [
         if (isVideo)
           const Center(
-            child: Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 42),
+            child: Icon(
+              Icons.play_circle_fill_rounded,
+              color: Colors.white70,
+              size: 42,
+            ),
           )
         else
           Image.network(
             _absoluteUrl(item.path),
             fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) =>
-                const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white70)),
+            errorBuilder: (context, error, stackTrace) => const Center(
+              child: Icon(Icons.broken_image_outlined, color: Colors.white70),
+            ),
           ),
         Positioned(
           left: 6,
@@ -1566,7 +2434,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               item.label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1582,7 +2454,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               ),
               child: Text(
                 '${items.length} konten',
-                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
@@ -1592,9 +2468,31 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   List<String> _gridPresetOptionsForOrientation(String orientation) {
     if (orientation == 'landscape') {
-      return const ['1x1', '1x2', '1x3', '1x4', '2x2', '2x3', '2x4', '3x3', '3x4', '4x4'];
+      return const [
+        '1x1',
+        '1x2',
+        '1x3',
+        '1x4',
+        '2x2',
+        '2x3',
+        '2x4',
+        '3x3',
+        '3x4',
+        '4x4',
+      ];
     }
-    return const ['1x1', '2x1', '3x1', '4x1', '2x2', '3x2', '4x2', '3x3', '4x3', '4x4'];
+    return const [
+      '1x1',
+      '2x1',
+      '3x1',
+      '4x1',
+      '2x2',
+      '3x2',
+      '4x2',
+      '3x3',
+      '4x3',
+      '4x4',
+    ];
   }
 
   Future<void> _loadGridPreviewForDevice(String deviceId) async {
@@ -1605,17 +2503,23 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       String orientation = 'portrait';
       for (final device in _devices) {
         if (device.id == deviceId) {
-          orientation = (device.orientation == 'landscape') ? 'landscape' : 'portrait';
+          orientation = (device.orientation == 'landscape')
+              ? 'landscape'
+              : 'portrait';
           break;
         }
       }
       String nextGrid = '1x1';
+      var nextTransition = 1;
       if (rawScreens.isNotEmpty && rawScreens.first is Map) {
         final first = rawScreens.first as Map;
         final foundGrid = (first['grid_preset'] ?? '').toString().trim();
         if (foundGrid.isNotEmpty) {
           nextGrid = foundGrid;
         }
+        nextTransition = _sanitizeTransitionDuration(
+          (first['transition_duration_sec'] as num?)?.toInt(),
+        );
       }
       final allowed = _gridPresetOptionsForOrientation(orientation);
       if (!allowed.contains(nextGrid)) {
@@ -1638,11 +2542,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           if (entry is! Map) continue;
           final map = Map<String, dynamic>.from(entry.cast<String, dynamic>());
           if ('${map['id']}' != playlistId) continue;
-          final items = (map['items'] as List<dynamic>? ?? const [])
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e.cast<String, dynamic>()))
-              .toList()
-            ..sort((a, b) => ((a['order'] as num?)?.toInt() ?? 0).compareTo((b['order'] as num?)?.toInt() ?? 0));
+          final items =
+              (map['items'] as List<dynamic>? ?? const [])
+                  .whereType<Map>()
+                  .map(
+                    (e) => Map<String, dynamic>.from(e.cast<String, dynamic>()),
+                  )
+                  .toList()
+                ..sort(
+                  (a, b) => ((a['order'] as num?)?.toInt() ?? 0).compareTo(
+                    (b['order'] as num?)?.toInt() ?? 0,
+                  ),
+                );
           for (final item in items) {
             final mediaId = '${item['media_id']}';
             final media = mediaMap[mediaId];
@@ -1664,6 +2575,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       setState(() {
         _gridTargetDeviceId = deviceId;
         _gridTargetPreset = nextGrid;
+        _gridTargetTransitionDuration = nextTransition;
         _gridTargetPreviewItems = previewItems;
       });
     } catch (e) {
@@ -1673,14 +2585,28 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
-  Future<void> _setGridPresetForDevice(String deviceId, String preset) async {
+  Future<void> _setGridPresetForDevice(
+    String deviceId,
+    String preset,
+    int transitionDurationSec,
+  ) async {
     try {
       final screens = await _api.listScreensForDevice(deviceId);
       if (screens.isEmpty) {
         _showMessage('Device tidak memiliki screen');
         return;
       }
-      await _api.updateScreenSettings(screenId: screens.first.id, gridPreset: preset);
+      final targetScreen = screens.first;
+      final sanitizedDuration = _sanitizeTransitionDuration(
+        transitionDurationSec,
+      );
+      await _api.updateScreenSettings(
+        screenId: targetScreen.id,
+        gridPreset: preset,
+        transitionDurationSec: sanitizedDuration,
+      );
+      _screenGridPresets[targetScreen.id] = preset;
+      _screenTransitionDurations[targetScreen.id] = sanitizedDuration;
       var targetName = deviceId;
       for (final device in _devices) {
         if (device.id == deviceId) {
@@ -1688,7 +2614,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           break;
         }
       }
-      _showMessage('Grid $preset diterapkan ke $targetName');
+      _showMessage(
+        'Grid $preset dan transisi ${sanitizedDuration}s diterapkan ke $targetName',
+      );
       await _refreshNowPlayingForSelectedDevices();
       await _loadGridPreviewForDevice(deviceId);
     } catch (e) {
@@ -1714,8 +2642,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     child: isVideo
                         ? _VideoPreview(url: url)
                         : isImage
-                            ? Image.network(url, fit: BoxFit.contain)
-                            : const Text('Unknown media type', style: TextStyle(color: Colors.white)),
+                        ? Image.network(url, fit: BoxFit.contain)
+                        : const Text(
+                            'Unknown media type',
+                            style: TextStyle(color: Colors.white),
+                          ),
                   ),
                 ),
                 Positioned(
@@ -1738,7 +2669,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   right: 8,
                   child: IconButton(
                     onPressed: () => Navigator.of(ctx).pop(),
-                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                     tooltip: 'Close',
                   ),
                 ),
@@ -1780,7 +2715,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Done')),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Done'),
+            ),
           ],
         );
       },
@@ -1798,6 +2736,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       final data = await _api.fetchDeviceConfigRaw(deviceId);
       final withGrid = Map<String, dynamic>.from(data);
       withGrid['desktop_grid_settings'] = _screenGridPresets;
+      withGrid['desktop_transition_settings'] = _screenTransitionDurations;
       String? path;
       try {
         path = await FilePicker.platform
@@ -1815,14 +2754,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       }
       if (path == null) return;
       final file = File(path);
-      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(withGrid));
+      await file.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(withGrid),
+      );
       _showMessage('Export berhasil');
     } catch (e) {
       _showMessage(e.toString());
     }
   }
 
-  Future<void> _setDeviceOrientation(DeviceInfo device, String orientation) async {
+  Future<void> _setDeviceOrientation(
+    DeviceInfo device,
+    String orientation,
+  ) async {
     try {
       await _api.updateDeviceOrientation(device.id, orientation);
       _showMessage('Orientation ${device.name} diubah ke $orientation');
@@ -1877,7 +2821,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       builder: (ctx) {
         return AlertDialog(
           title: const Text('Hapus device terpilih'),
-          content: Text('Yakin ingin hapus ${selectedIds.length} device terpilih?'),
+          content: Text(
+            'Yakin ingin hapus ${selectedIds.length} device terpilih?',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -1911,7 +2857,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     final compactTop = MediaQuery.sizeOf(context).width < 1060;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Content Control', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text(
+          'Content Control',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -1962,20 +2911,30 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                           children: [
                             TextField(
                               controller: _baseUrlController,
-                              decoration: const InputDecoration(labelText: 'Base URL'),
+                              decoration: const InputDecoration(
+                                labelText: 'Base URL',
+                              ),
                             ),
                             const SizedBox(height: 8),
                             TextField(
                               controller: _apiKeyController,
-                              decoration: const InputDecoration(labelText: 'API Key (opsional)'),
+                              decoration: const InputDecoration(
+                                labelText: 'API Key (opsional)',
+                              ),
                             ),
                             const SizedBox(height: 10),
                             Wrap(
                               spacing: 8,
                               runSpacing: 8,
                               children: [
-                                ElevatedButton(onPressed: _refreshing ? null : _refresh, child: const Text('Refresh')),
-                                ElevatedButton(onPressed: _exportConfig, child: const Text('Export')),
+                                ElevatedButton(
+                                  onPressed: _refreshing ? null : _refresh,
+                                  child: const Text('Refresh'),
+                                ),
+                                ElevatedButton(
+                                  onPressed: _exportConfig,
+                                  child: const Text('Export'),
+                                ),
                               ],
                             ),
                           ],
@@ -1985,7 +2944,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                             Expanded(
                               child: TextField(
                                 controller: _baseUrlController,
-                                decoration: const InputDecoration(labelText: 'Base URL'),
+                                decoration: const InputDecoration(
+                                  labelText: 'Base URL',
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -1993,13 +2954,21 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                               width: 180,
                               child: TextField(
                                 controller: _apiKeyController,
-                                decoration: const InputDecoration(labelText: 'API Key (opsional)'),
+                                decoration: const InputDecoration(
+                                  labelText: 'API Key (opsional)',
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
-                            ElevatedButton(onPressed: _refreshing ? null : _refresh, child: const Text('Refresh')),
+                            ElevatedButton(
+                              onPressed: _refreshing ? null : _refresh,
+                              child: const Text('Refresh'),
+                            ),
                             const SizedBox(width: 8),
-                            ElevatedButton(onPressed: _exportConfig, child: const Text('Export')),
+                            ElevatedButton(
+                              onPressed: _exportConfig,
+                              child: const Text('Export'),
+                            ),
                           ],
                         ),
                 ),
@@ -2009,7 +2978,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Card(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   child: Wrap(
                     spacing: 12,
                     runSpacing: 8,
@@ -2025,19 +2997,26 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                           const Text('Auto refresh (30s)'),
                         ],
                       ),
-                      if (_lastRefreshAt != null) Text('Last: ${_lastRefreshAt!.toLocal()}'),
+                      if (_lastRefreshAt != null)
+                        Text('Last: ${_lastRefreshAt!.toLocal()}'),
                       if (_refreshing)
                         const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
                             SizedBox(width: 8),
                             Text('Refreshing...'),
                           ],
                         ),
                       if (!_refreshing && _lastError != null)
                         SizedBox(
-                          width: compactTop ? MediaQuery.sizeOf(context).width - 90 : 420,
+                          width: compactTop
+                              ? MediaQuery.sizeOf(context).width - 90
+                              : 420,
                           child: Text(
                             'Error: $_lastError',
                             overflow: TextOverflow.ellipsis,
@@ -2082,68 +3061,133 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 920;
         return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          DropZone(onFiles: (files) => _setSelectedFilesWithFilter(files, source: 'drag drop')),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ElevatedButton(onPressed: _pickFile, child: const Text('Pick File')),
-              DropdownButton<String>(
-                value: _mediaType,
-                items: const [
-                  DropdownMenuItem(value: 'auto', child: Text('Auto')),
-                  DropdownMenuItem(value: 'image', child: Text('Image')),
-                  DropdownMenuItem(value: 'video', child: Text('Video')),
-                ],
-                onChanged: (v) => setState(() => _mediaType = v ?? 'auto'),
+              DropZone(
+                onFiles: (files) =>
+                    _setSelectedFilesWithFilter(files, source: 'drag drop'),
               ),
-              SizedBox(
-                width: compact ? 160 : 120,
-                child: TextField(
-                  decoration: const InputDecoration(labelText: 'Durasi (detik)'),
-                  keyboardType: TextInputType.number,
-                  onChanged: (v) => _durationSec = int.tryParse(v) ?? 10,
-                ),
-              ),
-              ElevatedButton(onPressed: _upload, child: const Text('Upload')),
-            ],
-          ),
-          const SizedBox(height: 8),
-          compact
-              ? Column(
-                  children: [
-                    TextField(
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ElevatedButton(
+                    onPressed: _pickFile,
+                    child: const Text('Pick File'),
+                  ),
+                  DropdownButton<String>(
+                    value: _mediaType,
+                    items: const [
+                      DropdownMenuItem(value: 'auto', child: Text('Auto')),
+                      DropdownMenuItem(value: 'image', child: Text('Image')),
+                      DropdownMenuItem(value: 'video', child: Text('Video')),
+                    ],
+                    onChanged: (v) => setState(() => _mediaType = v ?? 'auto'),
+                  ),
+                  SizedBox(
+                    width: compact ? 160 : 120,
+                    child: TextField(
                       decoration: const InputDecoration(
-                        labelText: 'Cari media di server (nama/path)',
-                        prefixIcon: Icon(Icons.search),
+                        labelText: 'Durasi (detik)',
                       ),
-                      onSubmitted: (value) {
-                        _mediaServerQuery = value;
-                        _refresh();
-                      },
+                      keyboardType: TextInputType.number,
+                      onChanged: (v) => _durationSec = int.tryParse(v) ?? 10,
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                  ),
+                  ElevatedButton(
+                    onPressed: _upload,
+                    child: const Text('Upload'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              compact
+                  ? Column(
                       children: [
+                        TextField(
+                          decoration: const InputDecoration(
+                            labelText: 'Cari media di server (nama/path)',
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                          onSubmitted: (value) {
+                            _mediaServerQuery = value;
+                            _refresh();
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            DropdownButton<String>(
+                              value: _mediaServerType,
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'all',
+                                  child: Text('All'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'image',
+                                  child: Text('Image'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'video',
+                                  child: Text('Video'),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                setState(
+                                  () => _mediaServerType = value ?? 'all',
+                                );
+                                _refresh();
+                              },
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: _refreshing ? null : _refresh,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Apply Filter'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'Cari media di server (nama/path)',
+                              prefixIcon: Icon(Icons.search),
+                            ),
+                            onSubmitted: (value) {
+                              _mediaServerQuery = value;
+                              _refresh();
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         DropdownButton<String>(
                           value: _mediaServerType,
                           items: const [
                             DropdownMenuItem(value: 'all', child: Text('All')),
-                            DropdownMenuItem(value: 'image', child: Text('Image')),
-                            DropdownMenuItem(value: 'video', child: Text('Video')),
+                            DropdownMenuItem(
+                              value: 'image',
+                              child: Text('Image'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'video',
+                              child: Text('Video'),
+                            ),
                           ],
                           onChanged: (value) {
                             setState(() => _mediaServerType = value ?? 'all');
                             _refresh();
                           },
                         ),
+                        const SizedBox(width: 8),
                         OutlinedButton.icon(
                           onPressed: _refreshing ? null : _refresh,
                           icon: const Icon(Icons.refresh),
@@ -2151,91 +3195,65 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         ),
                       ],
                     ),
-                  ],
-                )
-              : Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        decoration: const InputDecoration(
-                          labelText: 'Cari media di server (nama/path)',
-                          prefixIcon: Icon(Icons.search),
-                        ),
-                        onSubmitted: (value) {
-                          _mediaServerQuery = value;
-                          _refresh();
-                        },
+              if (_uploading) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(value: _uploadProgress),
+              ],
+              const SizedBox(height: 12),
+              if (_selectedFiles.isNotEmpty)
+                Text(
+                  'Selected files: ${_selectedFiles.map((f) => f.uri.pathSegments.last).join(', ')}',
+                ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  Text('Media loaded: ${_media.length} / $_mediaTotal'),
+                  if (_mediaOffset < _mediaTotal)
+                    OutlinedButton(
+                      onPressed: _mediaPageLoading ? null : _loadMoreMedia,
+                      child: Text(
+                        _mediaPageLoading ? 'Loading...' : 'Load More',
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    DropdownButton<String>(
-                      value: _mediaServerType,
-                      items: const [
-                        DropdownMenuItem(value: 'all', child: Text('All')),
-                        DropdownMenuItem(value: 'image', child: Text('Image')),
-                        DropdownMenuItem(value: 'video', child: Text('Video')),
-                      ],
-                      onChanged: (value) {
-                        setState(() => _mediaServerType = value ?? 'all');
-                        _refresh();
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: _refreshing ? null : _refresh,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Apply Filter'),
-                    ),
-                  ],
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _media.length,
+                  itemBuilder: (context, i) {
+                    final m = _media[i];
+                    final inferredType = _isVideoPath(m.path)
+                        ? 'video'
+                        : _isImagePath(m.path)
+                        ? 'image'
+                        : m.type;
+                    return ListTile(
+                      title: Text(m.name),
+                      subtitle: Text('$inferredType | ${m.path}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: () => _previewMedia(m),
+                            child: const Text('Preview'),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            onPressed: () => _deleteMedia(m),
+                            child: const Text('Delete'),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
-          if (_uploading) ...[
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: _uploadProgress),
-          ],
-          const SizedBox(height: 12),
-          if (_selectedFiles.isNotEmpty)
-            Text('Selected files: ${_selectedFiles.map((f) => f.uri.pathSegments.last).join(', ')}'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              Text('Media loaded: ${_media.length} / $_mediaTotal'),
-              if (_mediaOffset < _mediaTotal)
-                OutlinedButton(
-                  onPressed: _mediaPageLoading ? null : _loadMoreMedia,
-                  child: Text(_mediaPageLoading ? 'Loading...' : 'Load More'),
-                ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _media.length,
-              itemBuilder: (context, i) {
-                final m = _media[i];
-                final inferredType = _isVideoPath(m.path) ? 'video' : _isImagePath(m.path) ? 'image' : m.type;
-                return ListTile(
-                  title: Text(m.name),
-                  subtitle: Text('$inferredType | ${m.path}'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton(onPressed: () => _previewMedia(m), child: const Text('Preview')),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: () => _deleteMedia(m),
-                        child: const Text('Delete'),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
+        );
       },
     );
   }
@@ -2245,114 +3263,134 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 980;
         return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFE0F2FE),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF7DD3FC)),
-            ),
-            child: const Text(
-              'Menu ini khusus untuk MENYUSUN playlist (pilih media, urutkan, atur durasi, lalu simpan jadi playlist baru).',
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ElevatedButton(onPressed: _createPlaylistForSelectedScreen, child: const Text('Simpan Sebagai Playlist Baru')),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F2FE),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF7DD3FC)),
+                ),
+                child: const Text(
+                  'Menu ini khusus untuk MENYUSUN playlist (pilih media, urutkan, atur durasi, lalu simpan jadi playlist baru).',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ElevatedButton(
+                    onPressed: _createPlaylistForSelectedScreen,
+                    child: const Text('Simpan Sebagai Playlist Baru'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Playlist tersedia pada screen aktif: ${_playlists.length}',
+                style: const TextStyle(color: Color(0xFF475569)),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Pilih media untuk playlist, atur durasi, dan urutan:',
+              ),
+              const SizedBox(height: 8),
+              compact
+                  ? Column(
+                      children: [
+                        TextField(
+                          decoration: const InputDecoration(
+                            labelText: 'Cari media (nama/path)',
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                          onChanged: (value) =>
+                              setState(() => _playlistMediaQuery = value),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'all', label: Text('Semua')),
+                              ButtonSegment(
+                                value: 'image',
+                                label: Text('Gambar'),
+                              ),
+                              ButtonSegment(
+                                value: 'video',
+                                label: Text('Video'),
+                              ),
+                            ],
+                            selected: {_playlistMediaFilter},
+                            onSelectionChanged: (value) {
+                              final selected = value.isNotEmpty
+                                  ? value.first
+                                  : 'all';
+                              setState(() => _playlistMediaFilter = selected);
+                            },
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'Cari media (nama/path)',
+                              prefixIcon: Icon(Icons.search),
+                            ),
+                            onChanged: (value) =>
+                                setState(() => _playlistMediaQuery = value),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment(value: 'all', label: Text('Semua')),
+                            ButtonSegment(
+                              value: 'image',
+                              label: Text('Gambar'),
+                            ),
+                            ButtonSegment(value: 'video', label: Text('Video')),
+                          ],
+                          selected: {_playlistMediaFilter},
+                          onSelectionChanged: (value) {
+                            final selected = value.isNotEmpty
+                                ? value.first
+                                : 'all';
+                            setState(() => _playlistMediaFilter = selected);
+                          },
+                        ),
+                      ],
+                    ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: compact
+                    ? Column(
+                        children: [
+                          Expanded(child: _playlistMediaSelectionList()),
+                          const SizedBox(height: 12),
+                          Expanded(child: _playlistSelectedReorderList()),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          Expanded(child: _playlistMediaSelectionList()),
+                          const SizedBox(width: 12),
+                          Expanded(child: _playlistSelectedReorderList()),
+                        ],
+                      ),
+              ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Playlist tersedia pada screen aktif: ${_playlists.length}',
-            style: const TextStyle(color: Color(0xFF475569)),
-          ),
-          const SizedBox(height: 12),
-          const Text('Pilih media untuk playlist, atur durasi, dan urutan:'),
-          const SizedBox(height: 8),
-          compact
-              ? Column(
-                  children: [
-                    TextField(
-                      decoration: const InputDecoration(
-                        labelText: 'Cari media (nama/path)',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                      onChanged: (value) => setState(() => _playlistMediaQuery = value),
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: SegmentedButton<String>(
-                        segments: const [
-                          ButtonSegment(value: 'all', label: Text('Semua')),
-                          ButtonSegment(value: 'image', label: Text('Gambar')),
-                          ButtonSegment(value: 'video', label: Text('Video')),
-                        ],
-                        selected: {_playlistMediaFilter},
-                        onSelectionChanged: (value) {
-                          final selected = value.isNotEmpty ? value.first : 'all';
-                          setState(() => _playlistMediaFilter = selected);
-                        },
-                      ),
-                    ),
-                  ],
-                )
-              : Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        decoration: const InputDecoration(
-                          labelText: 'Cari media (nama/path)',
-                          prefixIcon: Icon(Icons.search),
-                        ),
-                        onChanged: (value) => setState(() => _playlistMediaQuery = value),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'all', label: Text('Semua')),
-                        ButtonSegment(value: 'image', label: Text('Gambar')),
-                        ButtonSegment(value: 'video', label: Text('Video')),
-                      ],
-                      selected: {_playlistMediaFilter},
-                      onSelectionChanged: (value) {
-                        final selected = value.isNotEmpty ? value.first : 'all';
-                        setState(() => _playlistMediaFilter = selected);
-                      },
-                    ),
-                  ],
-                ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: compact
-                ? Column(
-                    children: [
-                      Expanded(child: _playlistMediaSelectionList()),
-                      const SizedBox(height: 12),
-                      Expanded(child: _playlistSelectedReorderList()),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      Expanded(child: _playlistMediaSelectionList()),
-                      const SizedBox(width: 12),
-                      Expanded(child: _playlistSelectedReorderList()),
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
+        );
       },
     );
   }
@@ -2362,7 +3400,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       builder: (context) {
         final filteredMedia = _filteredMediaForPlaylist();
         if (filteredMedia.isEmpty) {
-          return const Center(child: Text('Media tidak ditemukan untuk filter ini'));
+          return const Center(
+            child: Text('Media tidak ditemukan untuk filter ini'),
+          );
         }
         return ListView.builder(
           itemCount: filteredMedia.length,
@@ -2380,7 +3420,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       setState(() {
                         if (value == true) {
                           _selectedMediaIds.add(m.id);
-                          _mediaDurations[m.id] = _mediaDurations[m.id] ?? _durationSec;
+                          _mediaDurations[m.id] =
+                              _mediaDurations[m.id] ?? _durationSec;
                         } else {
                           _selectedMediaIds.remove(m.id);
                           _mediaDurations.remove(m.id);
@@ -2449,21 +3490,24 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             ),
           ),
           const SizedBox(height: 10),
-          const Text('Kelola playlist dari screen aktif', style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text(
+            'Kelola playlist dari screen aktif',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: DropdownButton<String>(
                   isExpanded: true,
-                  value: _playlists.any((p) => p.id == _managePlaylistId) ? _managePlaylistId : null,
+                  value: _playlists.any((p) => p.id == _managePlaylistId)
+                      ? _managePlaylistId
+                      : null,
                   hint: const Text('Pilih playlist'),
                   items: _playlists
                       .map(
-                        (p) => DropdownMenuItem(
-                          value: p.id,
-                          child: Text(p.name),
-                        ),
+                        (p) =>
+                            DropdownMenuItem(value: p.id, child: Text(p.name)),
                       )
                       .toList(),
                   onChanged: (value) {
@@ -2474,7 +3518,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               ),
               const SizedBox(width: 8),
               ElevatedButton(
-                onPressed: _managePlaylistId == null ? null : _loadManagePlaylistData,
+                onPressed: _managePlaylistId == null
+                    ? null
+                    : _loadManagePlaylistData,
                 child: const Text('Refresh'),
               ),
             ],
@@ -2491,19 +3537,27 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             runSpacing: 8,
             children: [
               ElevatedButton(
-                onPressed: (_managePlaylistId == null || !_managePlaylistDirty) ? null : _updateManagedPlaylist,
+                onPressed: (_managePlaylistId == null || !_managePlaylistDirty)
+                    ? null
+                    : _updateManagedPlaylist,
                 child: const Text('Update Playlist'),
               ),
               ElevatedButton(
-                onPressed: _managePlaylistId == null ? null : _renameManagedPlaylist,
+                onPressed: _managePlaylistId == null
+                    ? null
+                    : _renameManagedPlaylist,
                 child: const Text('Update Nama Playlist'),
               ),
               ElevatedButton(
-                onPressed: _manageSelectedItemIds.isEmpty ? null : _deleteManagedPlaylistItems,
+                onPressed: _manageSelectedItemIds.isEmpty
+                    ? null
+                    : _deleteManagedPlaylistItems,
                 child: const Text('Hapus Media Terpilih'),
               ),
               ElevatedButton(
-                onPressed: _managePlaylistId == null ? null : _deleteManagedPlaylist,
+                onPressed: _managePlaylistId == null
+                    ? null
+                    : _deleteManagedPlaylist,
                 child: const Text('Hapus Playlist'),
               ),
             ],
@@ -2514,12 +3568,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               Expanded(
                 child: DropdownButton<String>(
                   isExpanded: true,
-                  value: _media.any((m) => m.id == _manageAddMediaId) ? _manageAddMediaId : null,
+                  value: _media.any((m) => m.id == _manageAddMediaId)
+                      ? _manageAddMediaId
+                      : null,
                   hint: const Text('Pilih media untuk ditambah'),
                   items: _media
-                      .map((m) => DropdownMenuItem(value: m.id, child: Text(m.name)))
+                      .map(
+                        (m) =>
+                            DropdownMenuItem(value: m.id, child: Text(m.name)),
+                      )
                       .toList(),
-                  onChanged: (value) => setState(() => _manageAddMediaId = value),
+                  onChanged: (value) =>
+                      setState(() => _manageAddMediaId = value),
                 ),
               ),
               const SizedBox(width: 8),
@@ -2533,7 +3593,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               ),
               const SizedBox(width: 8),
               ElevatedButton(
-                onPressed: _managePlaylistId == null ? null : _addMediaToManagedPlaylist,
+                onPressed: _managePlaylistId == null
+                    ? null
+                    : _addMediaToManagedPlaylist,
                 child: const Text('Tambah Media'),
               ),
             ],
@@ -2542,7 +3604,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           if (_managePlaylistLoading)
             const Expanded(child: Center(child: CircularProgressIndicator()))
           else if (_managePlaylistId == null)
-            const Expanded(child: Center(child: Text('Pilih playlist untuk dikelola')))
+            const Expanded(
+              child: Center(child: Text('Pilih playlist untuk dikelola')),
+            )
           else
             Expanded(
               child: ReorderableListView.builder(
@@ -2574,7 +3638,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         },
                       ),
                       title: Text('${i + 1}. ${item.mediaName}'),
-                      subtitle: Text('${item.mediaType} | durasi: ${item.durationSec ?? '-'}'),
+                      subtitle: Text(
+                        '${item.mediaType} | durasi: ${item.durationSec ?? '-'}',
+                      ),
                       trailing: ReorderableDragStartListener(
                         index: i,
                         child: const Icon(Icons.drag_handle),
@@ -2590,19 +3656,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   Widget _flashSaleTab() {
-    final filteredMedia = _filteredMediaForFlashSale();
     final landscapeDevices = _flashSaleLandscapeDevices();
     final landscapeDeviceIds = landscapeDevices.map((d) => d.id).toSet();
-    _flashSaleDeviceIds.removeWhere((deviceId) => !landscapeDeviceIds.contains(deviceId));
-    const dayLabels = <int, String>{
-      1: 'Sen',
-      2: 'Sel',
-      3: 'Rab',
-      4: 'Kam',
-      5: 'Jum',
-      6: 'Sab',
-      0: 'Min',
-    };
+    _flashSaleDeviceIds.removeWhere(
+      (deviceId) => !landscapeDeviceIds.contains(deviceId),
+    );
 
     return Padding(
       padding: const EdgeInsets.all(12),
@@ -2617,64 +3675,177 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               border: Border.all(color: const Color(0xFFFDA4AF)),
             ),
             child: const Text(
-              'Menu Flash Sale: pilih barang/media promo, device target, jam tayang, hari aktif, lalu tayangkan.',
+              'Alur Flash Sale baru: isi note + countdown + produk+media, pilih device target, lalu tayangkan sekarang atau jadwalkan.',
               style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF93C5FD)),
+            ),
+            child: const Text(
+              'Info: saat Flash Sale aktif di mobile, tampilan otomatis fullscreen (grid 1x1).',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFECFDF5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF6EE7B7)),
+            ),
+            child: const Text(
+              'Auto stop aktif: setelah countdown selesai, overlay Flash Sale mobile otomatis nonaktif.',
+              style: TextStyle(fontWeight: FontWeight.w700),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
-            controller: _flashSaleNameController,
+            controller: _flashSaleNoteController,
             decoration: const InputDecoration(
-              labelText: 'Nama Flash Sale / Nama Barang',
-              hintText: 'Contoh: Minyak Goreng 2L',
+              labelText: 'Note Flash Sale (running text)',
+              hintText:
+                  'Contoh: Promo berlaku selama stok tersedia. Maks 2 item/pelanggan.',
+            ),
+            maxLines: 2,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Countdown Flash Sale (sinkron ke app mobile)',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _flashSaleCountdownController,
+            keyboardType: TextInputType.number,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              labelText: 'Countdown (detik)',
+              hintText: 'Contoh: 600',
+              helperText:
+                  'Wajib diisi. Ini sumber countdown tunggal untuk sinkron ke app mobile.',
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _flashSaleStartController,
-                  decoration: const InputDecoration(labelText: 'Jam mulai (HH:MM)'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: _flashSaleEndController,
-                  decoration: const InputDecoration(labelText: 'Jam selesai (HH:MM)'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: dayLabels.entries.map((entry) {
-              final selected = _flashSaleDays.contains(entry.key);
-              return FilterChip(
-                label: Text(entry.value),
-                selected: selected,
-                onSelected: (value) {
-                  setState(() {
-                    if (value) {
-                      _flashSaleDays.add(entry.key);
-                    } else {
-                      _flashSaleDays.remove(entry.key);
-                    }
-                  });
-                },
-              );
-            }).toList(),
+            children: [
+              ..._flashSaleCountdownPresetSeconds().map((seconds) {
+                final selected =
+                    int.tryParse(_flashSaleCountdownController.text.trim()) ==
+                    seconds;
+                return ChoiceChip(
+                  label: Text(_flashSaleCountdownLabel(seconds)),
+                  selected: selected,
+                  onSelected: (_) {
+                    setState(
+                      () => _flashSaleCountdownController.text = seconds
+                          .toString(),
+                    );
+                  },
+                );
+              }),
+            ],
           ),
           const SizedBox(height: 12),
-          const Text('Pilih Device Target (Landscape / TV Android)', style: TextStyle(fontWeight: FontWeight.w700)),
+          Row(
+            children: [
+              const Text(
+                'Produk Flash Sale',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const Spacer(),
+              OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _flashSaleProducts.add(
+                      _FlashSaleProductDraft(
+                        name: '',
+                        brand: '',
+                        normalPrice: '',
+                        promoPrice: '',
+                        stock: '',
+                        mediaId: '',
+                      ),
+                    );
+                    _resetFlashSaleMediaCheckStatus();
+                  });
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Tambah Produk'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ..._flashSaleProducts.asMap().entries.map((entry) {
+            final index = entry.key;
+            final item = entry.value;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.name.trim().isEmpty
+                          ? 'Produk ${index + 1} (belum diisi)'
+                          : '${item.name} | ${item.brand} | Normal ${item.normalPrice} -> Promo ${item.promoPrice} | Stok ${item.stock} | Media ${_flashSaleMediaLabelById(item.mediaId)}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: () => _editFlashSaleProduct(index),
+                    child: const Text('Edit'),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    tooltip: 'Hapus produk',
+                    onPressed: () {
+                      setState(() {
+                        if (_flashSaleProducts.length > 1) {
+                          _flashSaleProducts.removeAt(index);
+                          _resetFlashSaleMediaCheckStatus();
+                        }
+                      });
+                    },
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: Color(0xFFB91C1C),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 12),
+          const Text(
+            'Pilih Device Target (Landscape / TV Android)',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 6),
           if (landscapeDevices.isEmpty)
             const Text(
               'Belum ada device landscape. Ubah orientation device ke landscape di menu Devices.',
-              style: TextStyle(color: Color(0xFFB91C1C), fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: Color(0xFFB91C1C),
+                fontWeight: FontWeight.w600,
+              ),
             )
           else
             Wrap(
@@ -2692,115 +3863,118 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       } else {
                         _flashSaleDeviceIds.remove(device.id);
                       }
+                      _resetFlashSaleMediaCheckStatus();
                     });
                   },
                 );
               }).toList(),
             ),
-          const SizedBox(height: 12),
-          const Text('Grid Flash Sale', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 6),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _gridPresetOptions().map((preset) {
-              return ChoiceChip(
-                label: Text(_gridPresetLabel(preset)),
-                selected: _flashSaleGridPreset == preset,
-                onSelected: (_) => setState(() => _flashSaleGridPreset = preset),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 12),
-          const Text('Pilih Media Flash Sale', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 6),
-          Row(
             children: [
-              Expanded(
-                child: TextField(
-                  controller: _flashSaleMediaQueryController,
-                  decoration: const InputDecoration(
-                    labelText: 'Cari media flash sale',
-                    prefixIcon: Icon(Icons.search),
-                  ),
-                  onChanged: (_) => setState(() {}),
+              OutlinedButton.icon(
+                onPressed: _flashSaleMediaCheckBusy
+                    ? null
+                    : _checkFlashSaleMediaSyncStatus,
+                icon: const Icon(Icons.cloud_sync_outlined),
+                label: Text(
+                  _flashSaleMediaCheckBusy
+                      ? 'Cek Sinkron...'
+                      : 'Cek Sinkron Media Device',
                 ),
               ),
-              const SizedBox(width: 8),
-              DropdownButton<String>(
-                value: _flashSaleMediaFilter,
-                items: const [
-                  DropdownMenuItem(value: 'all', child: Text('All')),
-                  DropdownMenuItem(value: 'image', child: Text('Image')),
-                  DropdownMenuItem(value: 'video', child: Text('Video')),
-                ],
-                onChanged: (value) => setState(() => _flashSaleMediaFilter = value ?? 'all'),
-              ),
+              if (_flashSaleMediaCheckedAt != null)
+                Chip(
+                  label: Text(
+                    'Dicek ${_flashSaleMediaCheckedAt!.hour.toString().padLeft(2, '0')}:${_flashSaleMediaCheckedAt!.minute.toString().padLeft(2, '0')}',
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 260,
-            child: ListView.builder(
-              itemCount: filteredMedia.length,
-              itemBuilder: (context, index) {
-                final media = filteredMedia[index];
-                final selected = _flashSaleMediaIds.contains(media.id);
-                final isVideo = media.type == 'video' || _isVideoPath(media.path);
-                return Row(
-                  children: [
-                    Expanded(
-                      child: CheckboxListTile(
-                        value: selected,
-                        title: Text(media.name),
-                        subtitle: Text(isVideo ? 'video (durasi ikut file)' : 'image'),
-                        onChanged: (value) {
-                          setState(() {
-                            if (value == true) {
-                              _flashSaleMediaIds.add(media.id);
-                              _flashSaleMediaDurations[media.id] = _flashSaleMediaDurations[media.id] ?? _durationSec;
-                            } else {
-                              _flashSaleMediaIds.remove(media.id);
-                              _flashSaleMediaDurations.remove(media.id);
-                            }
-                          });
-                        },
-                      ),
-                    ),
-                    if (!isVideo)
-                      SizedBox(
-                        width: 100,
-                        child: TextField(
-                          decoration: const InputDecoration(labelText: 'Detik'),
-                          keyboardType: TextInputType.number,
-                          onChanged: (value) {
-                            final next = int.tryParse(value) ?? _durationSec;
-                            _flashSaleMediaDurations[media.id] = next;
-                          },
+          if (_flashSaleMissingMediaByDevice.isNotEmpty ||
+              _flashSaleMediaErrorByDevice.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _flashSaleTargetDeviceIds().map((deviceId) {
+                  final error = _flashSaleMediaErrorByDevice[deviceId];
+                  final missing =
+                      _flashSaleMissingMediaByDevice[deviceId] ?? const [];
+                  final matched = _devices.where((d) => d.id == deviceId);
+                  final title =
+                      (matched.isEmpty ? deviceId : matched.first.name).trim();
+
+                  if (error != null) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '$title: gagal cek sinkron (${error.split('\n').first})',
+                        style: const TextStyle(
+                          color: Color(0xFFB91C1C),
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                  ],
-                );
-              },
+                    );
+                  }
+                  if (missing.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '$title: siap, media produk sudah terdaftar di config device',
+                        style: const TextStyle(
+                          color: Color(0xFF166534),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      '$title: media belum terdaftar (${missing.join(', ')})',
+                      style: const TextStyle(
+                        color: Color(0xFF92400E),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
             ),
-          ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
               ElevatedButton.icon(
-                onPressed: _flashSaleBusy ? null : () => _runFlashSale(scheduleOnly: false),
+                onPressed: _flashSaleBusy ? null : _runFlashSaleNow,
                 icon: const Icon(Icons.flash_on),
-                label: Text(_flashSaleBusy ? 'Memproses...' : 'Tayangkan Sekarang'),
+                label: Text(
+                  _flashSaleBusy ? 'Memproses...' : 'Tayangkan Sekarang',
+                ),
               ),
               OutlinedButton.icon(
-                onPressed: _flashSaleBusy ? null : () => _runFlashSale(scheduleOnly: true),
+                onPressed: _flashSaleBusy ? null : _openScheduleFlashSaleDialog,
                 icon: const Icon(Icons.schedule),
-                label: const Text('Jadwalkan Saja'),
+                label: const Text('Jadwalkan Flashsale'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _flashSaleBusy ? null : _disableFlashSaleForTargets,
+                icon: const Icon(Icons.flash_off),
+                label: const Text('Nonaktifkan Flash Sale'),
               ),
             ],
           ),
+          const SizedBox(height: 4),
         ],
       ),
     );
@@ -2830,7 +4004,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             style: TextStyle(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
-          const Text('Pilih Device', style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text(
+            'Pilih Device',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -2861,7 +4038,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             ],
           ),
           const SizedBox(height: 12),
-          const Text('Sedang Diputar', style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text(
+            'Sedang Diputar',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 6),
           if (_selectedDeviceIds.isEmpty)
             const Text('Belum ada device dipilih')
@@ -2874,28 +4054,43 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   break;
                 }
               }
-              final playingName = _deviceNowPlayingName[deviceId] ?? 'Loading...';
+              final playingName =
+                  _deviceNowPlayingName[deviceId] ?? 'Loading...';
               final gridActive = _deviceGridPreset[deviceId] ?? '-';
               final gridKnown = RegExp(r'^\d+x\d+$').hasMatch(gridActive);
-              final orientation = (device?.orientation == 'landscape') ? 'landscape' : 'portrait';
-              final orientationIcon =
-                  orientation == 'landscape' ? Icons.stay_current_landscape : Icons.stay_current_portrait;
+              final orientation = (device?.orientation == 'landscape')
+                  ? 'landscape'
+                  : 'portrait';
+              final orientationIcon = orientation == 'landscape'
+                  ? Icons.stay_current_landscape
+                  : Icons.stay_current_portrait;
               return ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.play_circle_outline, size: 18),
                 title: Row(
                   children: [
-                    Icon(orientationIcon, size: 16, color: const Color(0xFF334155)),
+                    Icon(
+                      orientationIcon,
+                      size: 16,
+                      color: const Color(0xFF334155),
+                    ),
                     const SizedBox(width: 6),
                     Expanded(child: Text(device?.name ?? deviceId)),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
-                        color: gridKnown ? const Color(0xFFD1FAE5) : const Color(0xFFF1F5F9),
+                        color: gridKnown
+                            ? const Color(0xFFD1FAE5)
+                            : const Color(0xFFF1F5F9),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
-                          color: gridKnown ? const Color(0xFF34D399) : const Color(0xFFCBD5E1),
+                          color: gridKnown
+                              ? const Color(0xFF34D399)
+                              : const Color(0xFFCBD5E1),
                         ),
                       ),
                       child: Text(
@@ -2903,7 +4098,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
-                          color: gridKnown ? const Color(0xFF065F46) : const Color(0xFF334155),
+                          color: gridKnown
+                              ? const Color(0xFF065F46)
+                              : const Color(0xFF334155),
                         ),
                       ),
                     ),
@@ -2913,8 +4110,32 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               );
             }),
           const SizedBox(height: 10),
-          const Text('Playlist per Device', style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text(
+            'Atur Playlist yang Diputar per Device',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFE0F2FE), Color(0xFFF0F9FF)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFBAE6FD)),
+            ),
+            child: const Text(
+              'Playlist bisa diterapkan ke banyak device. Jika playlist belum ada di device target, sistem akan membuat salinan otomatis.',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF0C4A6E),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           if (_selectedDeviceIds.isEmpty)
             const Text('Pilih device dulu untuk assign playlist berbeda')
           else
@@ -2926,77 +4147,126 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   break;
                 }
               }
+              final devicePlaylists = _playlistsForDevice(deviceId);
               final selected = _devicePlaylistSelection[deviceId];
-              return Row(
-                children: [
-                  SizedBox(
-                    width: 190,
-                    child: Text(
-                      device?.name ?? deviceId,
-                      overflow: TextOverflow.ellipsis,
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFCBD5E1)),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 190,
+                      child: Text(
+                        device?.name ?? deviceId,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: DropdownButton<String>(
-                      isExpanded: true,
-                      value: _playlistLibrary.any((p) => p.playlistId == selected) ? selected : null,
-                      hint: const Text('Pilih playlist'),
-                      items: _playlistLibrary
-                          .map(
-                            (p) => DropdownMenuItem(
-                              value: p.playlistId,
-                              child: Text(p.name),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        setState(() => _devicePlaylistSelection[deviceId] = value);
-                      },
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value:
+                            devicePlaylists.any((p) => p.playlistId == selected)
+                            ? selected
+                            : null,
+                        hint: const Text('Pilih playlist device ini'),
+                        items: devicePlaylists
+                            .map(
+                              (p) => DropdownMenuItem(
+                                value: p.playlistId,
+                                child: Text(
+                                  p.name,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          setState(
+                            () => _devicePlaylistSelection[deviceId] = value,
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               );
             }),
           const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: ElevatedButton(
-              onPressed: _selectedDeviceIds.isEmpty ? null : _applyPerDevicePlaylistAssignments,
-              child: const Text('Apply Playlist per Device'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              DropdownButton<String>(
-                value: _selectedLibraryPlaylistId,
-                hint: const Text('Pilih playlist'),
-                items: _playlistLibrary
-                    .map(
-                      (p) => DropdownMenuItem(
-                        value: p.playlistId,
-                        child: Text(p.name),
+          Builder(
+            builder: (context) {
+              final options = _bulkPlaylistNameOptions();
+              final selected = options.contains(_bulkPlaylistName)
+                  ? _bulkPlaylistName
+                  : null;
+              return Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFFCF6),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFBBF7D0)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.groups_2_outlined,
+                      size: 18,
+                      color: Color(0xFF166534),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value: selected,
+                        hint: const Text(
+                          'Pilih 1 playlist untuk semua device terpilih',
+                        ),
+                        items: options
+                            .map(
+                              (name) => DropdownMenuItem(
+                                value: name,
+                                child: Text(name),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _selectedDeviceIds.isEmpty
+                            ? null
+                            : (value) =>
+                                  setState(() => _bulkPlaylistName = value),
                       ),
-                    )
-                    .toList(),
-                onChanged: (v) {
-                  setState(() {
-                    _selectedLibraryPlaylistId = v;
-                    for (final deviceId in _selectedDeviceIds) {
-                      _devicePlaylistSelection.putIfAbsent(deviceId, () => v);
-                    }
-                  });
-                },
-              ),
-              ElevatedButton(
-                onPressed: _assignLibraryPlaylistToSelectedDevices,
-                child: const Text('Apply Playlist ke Device Terpilih'),
-              ),
-            ],
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed:
+                          (_selectedDeviceIds.isEmpty || selected == null)
+                          ? null
+                          : _applySamePlaylistToSelectedDevices,
+                      child: const Text('Apply ke Semua Device Terpilih'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _selectedDeviceIds.isEmpty
+                  ? null
+                  : _applyPerDevicePlaylistAssignments,
+              icon: const Icon(Icons.playlist_add_check_circle_outlined),
+              label: const Text('Apply Playlist per Device'),
+            ),
           ),
           const SizedBox(height: 12),
           Container(
@@ -3035,9 +4305,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         break;
       }
     }
-    final orientation = (targetDevice?.orientation == 'landscape') ? 'landscape' : 'portrait';
-    final orientationIcon =
-        orientation == 'landscape' ? Icons.stay_current_landscape : Icons.stay_current_portrait;
+    final orientation = (targetDevice?.orientation == 'landscape')
+        ? 'landscape'
+        : 'portrait';
+    final orientationIcon = orientation == 'landscape'
+        ? Icons.stay_current_landscape
+        : Icons.stay_current_portrait;
     final allowedPresets = _gridPresetOptionsForOrientation(orientation);
     if (!allowedPresets.contains(_gridTargetPreset)) {
       _gridTargetPreset = allowedPresets.first;
@@ -3065,13 +4338,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               Expanded(
                 child: DropdownButton<String>(
                   isExpanded: true,
-                  value: _devices.any((d) => d.id == _gridTargetDeviceId) ? _gridTargetDeviceId : null,
+                  value: _devices.any((d) => d.id == _gridTargetDeviceId)
+                      ? _gridTargetDeviceId
+                      : null,
                   hint: const Text('Pilih device'),
                   items: _devices
-                      .map((d) => DropdownMenuItem(
-                            value: d.id,
-                            child: Text('${d.name} (${d.orientation ?? 'portrait'})'),
-                          ))
+                      .map(
+                        (d) => DropdownMenuItem(
+                          value: d.id,
+                          child: Text(
+                            '${d.name} (${d.orientation ?? 'portrait'})',
+                          ),
+                        ),
+                      )
                       .toList(),
                   onChanged: (value) async {
                     if (value == null) return;
@@ -3082,7 +4361,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               const SizedBox(width: 8),
               if (targetDevice != null)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFE2E8F0),
                     borderRadius: BorderRadius.circular(999),
@@ -3092,7 +4374,13 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     children: [
                       Icon(orientationIcon, size: 16),
                       const SizedBox(width: 6),
-                      Text(orientation.toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11)),
+                      Text(
+                        orientation.toUpperCase(),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -3119,11 +4407,68 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             }).toList(),
           ),
           const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('Durasi transisi'),
+              const SizedBox(width: 10),
+              IconButton(
+                tooltip: 'Kurangi',
+                onPressed: () {
+                  setState(() {
+                    _gridTargetTransitionDuration = _sanitizeTransitionDuration(
+                      _gridTargetTransitionDuration - 1,
+                    );
+                  });
+                },
+                icon: const Icon(Icons.remove_circle_outline),
+              ),
+              SizedBox(
+                width: 40,
+                child: Text(
+                  '${_gridTargetTransitionDuration}s',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Tambah',
+                onPressed: () {
+                  setState(() {
+                    _gridTargetTransitionDuration = _sanitizeTransitionDuration(
+                      _gridTargetTransitionDuration + 1,
+                    );
+                  });
+                },
+                icon: const Icon(Icons.add_circle_outline),
+              ),
+              Expanded(
+                child: Slider(
+                  value: _gridTargetTransitionDuration.toDouble(),
+                  min: 0,
+                  max: 30,
+                  divisions: 30,
+                  label: '${_gridTargetTransitionDuration}s',
+                  onChanged: (value) {
+                    setState(() {
+                      _gridTargetTransitionDuration = value.round();
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
           ElevatedButton(
             onPressed: (_gridTargetDeviceId == null || _gridTargetLoading)
                 ? null
-                : () => _setGridPresetForDevice(_gridTargetDeviceId!, _gridTargetPreset),
-            child: Text(_gridTargetLoading ? 'Loading...' : 'Apply Grid ke Device Ini'),
+                : () => _setGridPresetForDevice(
+                    _gridTargetDeviceId!,
+                    _gridTargetPreset,
+                    _gridTargetTransitionDuration,
+                  ),
+            child: Text(
+              _gridTargetLoading ? 'Loading...' : 'Apply Grid ke Device Ini',
+            ),
           ),
           const SizedBox(height: 12),
           Container(
@@ -3140,14 +4485,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Preview ${_gridRows(_gridTargetPreset)}x${_gridCols(_gridTargetPreset)}'),
+                Text(
+                  'Preview ${_gridRows(_gridTargetPreset)}x${_gridCols(_gridTargetPreset)}',
+                ),
                 const SizedBox(height: 8),
                 Builder(
                   builder: (context) {
                     final rows = _gridRows(_gridTargetPreset).clamp(1, 4);
                     final cols = _gridCols(_gridTargetPreset).clamp(1, 4);
                     final cellCount = rows * cols;
-                    final targetAspect = orientation == 'landscape' ? (16 / 9) : (9 / 16);
+                    final targetAspect = orientation == 'landscape'
+                        ? (16 / 9)
+                        : (9 / 16);
                     final maxWidth = MediaQuery.sizeOf(context).width - 120;
                     final previewWidth = math.min(maxWidth, 560.0);
                     final previewHeight = previewWidth / targetAspect;
@@ -3159,38 +4508,58 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         child: GridView.builder(
                           physics: const NeverScrollableScrollPhysics(),
                           itemCount: cellCount,
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: cols,
-                            mainAxisSpacing: 6,
-                            crossAxisSpacing: 6,
-                          ),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: cols,
+                                mainAxisSpacing: 6,
+                                crossAxisSpacing: 6,
+                              ),
                           itemBuilder: (context, i) {
                             final cellNo = i + 1;
-                            final cellItems = _gridItemsForCellFromSource(_gridTargetPreviewItems, i, cellCount);
+                            final cellItems = _gridItemsForCellFromSource(
+                              _gridTargetPreviewItems,
+                              i,
+                              cellCount,
+                            );
                             final hasData = cellItems.isNotEmpty;
                             return Container(
                               decoration: BoxDecoration(
                                 color: hasData ? Colors.black : Colors.white,
-                                border: Border.all(color: const Color(0xFFBAE6FD)),
+                                border: Border.all(
+                                  color: const Color(0xFFBAE6FD),
+                                ),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: _gridTargetLoading
                                   ? const Center(
-                                      child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                                      child: SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
                                     )
                                   : (!hasData
-                                      ? Center(
-                                          child: Text(
-                                            'Cell $cellNo',
-                                            style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF075985)),
-                                          ),
-                                        )
-                                      : Padding(
-                                          padding: const EdgeInsets.all(4),
-                                          child: cellCount == 1
-                                              ? _buildFullscreenGridPreview(cellItems)
-                                              : _buildGridCellMosaic(cellItems),
-                                        )),
+                                        ? Center(
+                                            child: Text(
+                                              'Cell $cellNo',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF075985),
+                                              ),
+                                            ),
+                                          )
+                                        : Padding(
+                                            padding: const EdgeInsets.all(4),
+                                            child: cellCount == 1
+                                                ? _buildFullscreenGridPreview(
+                                                    cellItems,
+                                                  )
+                                                : _buildGridCellMosaic(
+                                                    cellItems,
+                                                  ),
+                                          )),
                             );
                           },
                         ),
@@ -3217,16 +4586,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text('Total: ${_devices.length} | Selected: ${_selectedDeviceIds.length}'),
+              Text(
+                'Total: ${_devices.length} | Selected: ${_selectedDeviceIds.length}',
+              ),
               ElevatedButton(
-                onPressed: _selectedDeviceIds.isEmpty ? null : _deleteSelectedDevices,
+                onPressed: _selectedDeviceIds.isEmpty
+                    ? null
+                    : _deleteSelectedDevices,
                 child: const Text('Hapus Device Terpilih'),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          if (_devices.isEmpty)
-            const Text('Belum ada device terdaftar.'),
+          if (_devices.isEmpty) const Text('Belum ada device terdaftar.'),
           Expanded(
             child: ListView.builder(
               itemCount: _devices.length,
@@ -3236,10 +4608,15 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 final lastSeen = d.lastSeen;
                 final isOnline = d.status.toLowerCase() == 'online';
                 final status = isOnline ? 'online' : 'offline';
-                final statusColor = isOnline ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
-                final orientation = (d.orientation == 'landscape') ? 'landscape' : 'portrait';
-                final orientationIcon =
-                    orientation == 'landscape' ? Icons.stay_current_landscape : Icons.stay_current_portrait;
+                final statusColor = isOnline
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFFB91C1C);
+                final orientation = (d.orientation == 'landscape')
+                    ? 'landscape'
+                    : 'portrait';
+                final orientationIcon = orientation == 'landscape'
+                    ? Icons.stay_current_landscape
+                    : Icons.stay_current_portrait;
                 return CheckboxListTile(
                   value: selected,
                   title: Row(
@@ -3248,14 +4625,21 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       const SizedBox(width: 6),
                       Expanded(child: Text(d.name)),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: statusColor.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           status.toUpperCase(),
-                          style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.w700),
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -3266,7 +4650,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       ),
                     ],
                   ),
-                  subtitle: Text('${d.id} | $orientation | last: ${lastSeen ?? '-'}'),
+                  subtitle: Text(
+                    '${d.id} | $orientation | last: ${lastSeen ?? '-'}',
+                  ),
                   secondary: PopupMenuButton<String>(
                     tooltip: 'Set orientation',
                     onSelected: (value) => _setDeviceOrientation(d, value),
@@ -3306,15 +4692,57 @@ class _PlaylistTemplate {
   final String name;
   final String deviceId;
   final String deviceName;
-  final String screenId;
+  final bool isFlashSale;
+  final String flashNote;
+  final int? flashCountdownSec;
+  final String flashItemsJson;
 
   _PlaylistTemplate({
     required this.playlistId,
     required this.name,
     required this.deviceId,
     required this.deviceName,
-    required this.screenId,
+    required this.isFlashSale,
+    required this.flashNote,
+    required this.flashCountdownSec,
+    required this.flashItemsJson,
   });
+}
+
+class _FlashSaleProductDraft {
+  final String name;
+  final String brand;
+  final String normalPrice;
+  final String promoPrice;
+  final String stock;
+  final String mediaId;
+
+  const _FlashSaleProductDraft({
+    required this.name,
+    required this.brand,
+    required this.normalPrice,
+    required this.promoPrice,
+    required this.stock,
+    required this.mediaId,
+  });
+
+  Map<String, String> toJson() {
+    return {
+      'name': name,
+      'brand': brand,
+      'normal_price': normalPrice,
+      'promo_price': promoPrice,
+      'stock': stock,
+      'media_id': mediaId,
+    };
+  }
+}
+
+class _AppliedPlaylistTarget {
+  final String screenId;
+  final String playlistId;
+
+  _AppliedPlaylistTarget({required this.screenId, required this.playlistId});
 }
 
 class _GridPreviewItem {

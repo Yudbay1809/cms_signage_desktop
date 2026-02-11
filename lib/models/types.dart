@@ -6,7 +6,14 @@ class DeviceInfo {
   final DateTime? lastSeen;
   final String? orientation;
 
-  DeviceInfo({required this.id, required this.name, this.location, required this.status, this.lastSeen, this.orientation});
+  DeviceInfo({
+    required this.id,
+    required this.name,
+    this.location,
+    required this.status,
+    this.lastSeen,
+    this.orientation,
+  });
 
   factory DeviceInfo.fromJson(Map<String, dynamic> json) {
     return DeviceInfo(
@@ -14,7 +21,9 @@ class DeviceInfo {
       name: json['name'] ?? '',
       location: json['location'],
       status: json['status'] ?? 'unknown',
-      lastSeen: json['last_seen'] != null ? DateTime.tryParse(json['last_seen']) : null,
+      lastSeen: json['last_seen'] != null
+          ? DateTime.tryParse(json['last_seen'])
+          : null,
       orientation: json['orientation'],
     );
   }
@@ -27,7 +36,13 @@ class MediaInfo {
   final String path;
   final int? durationSec;
 
-  MediaInfo({required this.id, required this.name, required this.type, required this.path, this.durationSec});
+  MediaInfo({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.path,
+    this.durationSec,
+  });
 
   factory MediaInfo.fromJson(Map<String, dynamic> json) {
     return MediaInfo(
@@ -59,15 +74,27 @@ class ScreenInfo {
   final String name;
   final String? activePlaylistId;
   final String? gridPreset;
+  final int? transitionDurationSec;
 
-  ScreenInfo({required this.id, required this.name, this.activePlaylistId, this.gridPreset});
+  ScreenInfo({
+    required this.id,
+    required this.name,
+    this.activePlaylistId,
+    this.gridPreset,
+    this.transitionDurationSec,
+  });
 }
 
 class PlaylistInfo {
   final String id;
   final String name;
+  final bool isFlashSale;
 
-  PlaylistInfo({required this.id, required this.name});
+  PlaylistInfo({
+    required this.id,
+    required this.name,
+    this.isFlashSale = false,
+  });
 }
 
 class PlaylistItemInfo {
@@ -106,6 +133,8 @@ class ScheduleInfo {
   final int dayOfWeek;
   final String startTime;
   final String endTime;
+  final String? note;
+  final int? countdownSec;
 
   ScheduleInfo({
     required this.id,
@@ -114,6 +143,8 @@ class ScheduleInfo {
     required this.dayOfWeek,
     required this.startTime,
     required this.endTime,
+    this.note,
+    this.countdownSec,
   });
 
   factory ScheduleInfo.fromJson(Map<String, dynamic> json) {
@@ -124,6 +155,8 @@ class ScheduleInfo {
       dayOfWeek: json['day_of_week'] ?? 0,
       startTime: (json['start_time'] ?? '').toString(),
       endTime: (json['end_time'] ?? '').toString(),
+      note: json['note']?.toString(),
+      countdownSec: (json['countdown_sec'] as num?)?.toInt(),
     );
   }
 }

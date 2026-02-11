@@ -2861,6 +2861,21 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           'Content Control',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Center(
+              child: Text(
+                'Created by Yudbay1809',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFE2E8F0),
+                ),
+              ),
+            ),
+          ),
+        ],
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(

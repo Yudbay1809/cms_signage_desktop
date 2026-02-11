@@ -55,6 +55,9 @@ Store screenshots in `docs/screenshots/` and keep references updated:
 - `docs/screenshots/schedule-grid.png`
 - `docs/screenshots/devices.png`
 
+## Maintainer
+- Yudbay1809
+
 ## Security
 Report vulnerabilities privately as defined in `SECURITY.md`.
 

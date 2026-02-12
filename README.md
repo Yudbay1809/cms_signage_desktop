@@ -7,6 +7,11 @@
 
 Desktop CMS built with Flutter for digital signage operations: upload media, build playlists, schedule content, manage devices, and configure Flash Sale campaigns.
 
+## Final Release Notes
+- Final validation passed for analyze, tests, release build, and app startup smoke.
+- CMS is aligned with backend final contract and websocket realtime refresh behavior.
+- Recommended production setup uses static backend base URL on LAN.
+
 ## Features
 - Media management (upload, preview, delete)
 - Playlist builder with ordering
@@ -23,6 +28,10 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - `http`, `dio`
 - `file_picker`, `desktop_drop`
 - `video_player`
+
+## Production Base URL Recommendation
+- Use fixed backend URL (example: `http://192.168.x.x:8000`) for stable operations.
+- Keep desktop and player pointed to the same backend environment (prod vs staging).
 
 ## Run Locally
 ```bash
@@ -41,12 +50,22 @@ flutter test
 flutter build windows --release
 ```
 
+Output:
+- `build/windows/x64/runner/Release/cms_signage_desktop.exe`
+
 ## Flash Sale Workflow
 1. Open `Flash Sale` tab.
 2. Fill `Note`, `Countdown`, and product rows (`name/brand/price/stock/media`).
 3. Select target devices.
 4. Use `Tayangkan Sekarang` or `Jadwalkan Flashsale`.
 5. Optional: use `Cek Sinkron Media Device` before publish.
+
+## Final Smoke Checklist
+1. Connect to backend and ensure device list loads.
+2. Upload media and verify preview works.
+3. Create playlist and assign to target screen.
+4. Create schedule and confirm no overlap errors.
+5. Trigger Flash Sale now/schedule and verify status update via websocket.
 
 ## Screenshots
 Store screenshots in `docs/screenshots/` and keep references updated:

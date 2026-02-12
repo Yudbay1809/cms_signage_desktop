@@ -192,11 +192,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     ),
   ];
   final Set<String> _flashSaleDeviceIds = {};
-  final Set<String> _selectedFlashSalePlaylistIds = {};
   final Set<int> _flashSaleScheduleDays = {1, 2, 3, 4, 5, 6, 0};
-  String? _flashSaleSourcePlaylistName;
   bool _flashSaleBusy = false;
-  bool _flashSaleCleanupBusy = false;
   bool _flashSaleMediaCheckBusy = false;
   DateTime? _flashSaleMediaCheckedAt;
   final Map<String, List<String>> _flashSaleMissingMediaByDevice = {};
@@ -371,8 +368,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           final discoveredPort = (data['server_port'] ?? '$port')
               .toString()
               .trim();
-          if (discoveredPort.isNotEmpty)
+          if (discoveredPort.isNotEmpty) {
             return '$scheme://$host:$discoveredPort';
+          }
           return '$scheme://$host';
         }
 
@@ -384,8 +382,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           final discoveredPort = (data['server_port'] ?? '$port')
               .toString()
               .trim();
-          if (discoveredPort.isNotEmpty)
+          if (discoveredPort.isNotEmpty) {
             return '$scheme://$host:$discoveredPort';
+          }
           return '$scheme://$host';
         }
       } catch (_) {}
@@ -508,8 +507,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         _selectedDeviceIds.removeWhere(
           (id) => !availableDeviceIds.contains(id),
         );
-        if (_selectedDeviceIds.isEmpty && devices.isNotEmpty)
+        if (_selectedDeviceIds.isEmpty && devices.isNotEmpty) {
           _selectedDeviceIds.add(devices.first.id);
+        }
         if (_gridTargetDeviceId != null &&
             !availableDeviceIds.contains(_gridTargetDeviceId!)) {
           _gridTargetDeviceId = null;
@@ -1223,33 +1223,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   String _normalizedText(String value) => value.trim().toLowerCase();
 
-  List<_PlaylistTemplate> _flashSalePlaylists() {
-    final rows = _playlistLibrary.where((item) => item.isFlashSale).toList();
-    rows.sort((a, b) => b.name.toLowerCase().compareTo(a.name.toLowerCase()));
-    return rows;
-  }
-
-  List<String> _flashSaleSourcePlaylistOptions() {
-    final names = <String>{};
-    for (final item in _playlistLibrary) {
-      final value = item.name.trim();
-      if (value.isEmpty) continue;
-      names.add(value);
-    }
-    final result = names.toList();
-    result.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return result;
-  }
-
-  _PlaylistTemplate? _findFlashSaleSourceTemplate() {
-    final target = (_flashSaleSourcePlaylistName ?? '').trim();
-    if (target.isEmpty) return null;
-    for (final item in _playlistLibrary) {
-      if (_normalizedText(item.name) == _normalizedText(target)) return item;
-    }
-    return null;
-  }
-
   List<MediaInfo> _flashSaleMediaOptions() {
     final rows = [..._media];
     rows.sort(
@@ -1268,25 +1241,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       }
     }
     return '$id (media tidak ditemukan di list saat ini)';
-  }
-
-  void _prefillFlashSaleMetaFromTemplate(_PlaylistTemplate template) {
-    if (template.flashNote.trim().isNotEmpty) {
-      _flashSaleNoteController.text = template.flashNote.trim();
-    }
-    if ((template.flashCountdownSec ?? 0) > 0) {
-      _flashSaleCountdownController.text = '${template.flashCountdownSec}';
-    }
-    final raw = template.flashItemsJson.trim();
-    if (raw.isNotEmpty) {
-      _applyFlashProductsFromJson(raw);
-    }
-    _resetFlashSaleMediaCheckStatus();
-  }
-
-  Future<void> _ensurePlaylistFlashSale(_PlaylistTemplate template) async {
-    if (template.isFlashSale) return;
-    await _api.updatePlaylistFlashSale(template.playlistId, true);
   }
 
   int? _flashSaleCountdownFromInput() {
@@ -1333,37 +1287,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         .where((item) => (item['name'] ?? '').toString().trim().isNotEmpty)
         .toList();
     return jsonEncode(rows);
-  }
-
-  void _applyFlashProductsFromJson(String raw) {
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return;
-      final next = <_FlashSaleProductDraft>[];
-      for (final row in decoded) {
-        if (row is! Map) continue;
-        final name = (row['name'] ?? '').toString();
-        final brand = (row['brand'] ?? '').toString();
-        final normalPrice = (row['normal_price'] ?? '').toString();
-        final promoPrice = (row['promo_price'] ?? '').toString();
-        final stock = (row['stock'] ?? '').toString();
-        final mediaId = (row['media_id'] ?? '').toString();
-        next.add(
-          _FlashSaleProductDraft(
-            name: name,
-            brand: brand,
-            normalPrice: normalPrice,
-            promoPrice: promoPrice,
-            stock: stock,
-            mediaId: mediaId,
-          ),
-        );
-      }
-      if (next.isEmpty) return;
-      _flashSaleProducts
-        ..clear()
-        ..addAll(next);
-    } catch (_) {}
   }
 
   Future<void> _editFlashSaleProduct(int index) async {
@@ -1782,102 +1705,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       }
     } finally {
       if (mounted) setState(() => _flashSaleBusy = false);
-    }
-  }
-
-  Future<void> _deleteFlashSalePlaylist(_PlaylistTemplate template) async {
-    if (_flashSaleCleanupBusy) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Hapus Flash Sale'),
-          content: Text(
-            'Hapus playlist "${template.name}" di device "${template.deviceName}"?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Batal'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Hapus'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true) return;
-
-    setState(() => _flashSaleCleanupBusy = true);
-    try {
-      await _api.deletePlaylist(template.playlistId);
-      _showMessage('Flash Sale dihapus');
-      await _loadPlaylistLibrary();
-      await _refreshNowPlayingForSelectedDevices();
-    } catch (e) {
-      _showMessage(e.toString());
-    } finally {
-      if (mounted) setState(() => _flashSaleCleanupBusy = false);
-    }
-  }
-
-  Future<void> _deleteSelectedFlashSalePlaylists() async {
-    if (_flashSaleCleanupBusy) return;
-    if (_selectedFlashSalePlaylistIds.isEmpty) {
-      _showMessage('Pilih minimal satu playlist Flash Sale');
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Hapus Flash Sale Terpilih'),
-          content: Text(
-            'Hapus ${_selectedFlashSalePlaylistIds.length} playlist Flash Sale yang dipilih?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Batal'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Hapus Semua'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true) return;
-
-    setState(() => _flashSaleCleanupBusy = true);
-    try {
-      var deleted = 0;
-      final failed = <String>[];
-      final ids = _selectedFlashSalePlaylistIds.toList();
-      for (final playlistId in ids) {
-        try {
-          await _api.deletePlaylist(playlistId);
-          deleted += 1;
-        } catch (_) {
-          failed.add(playlistId);
-        }
-      }
-      _selectedFlashSalePlaylistIds.clear();
-      await _loadPlaylistLibrary();
-      await _refreshNowPlayingForSelectedDevices();
-      if (failed.isEmpty) {
-        _showMessage('$deleted Flash Sale berhasil dihapus');
-      } else {
-        _showMessage('$deleted Flash Sale dihapus, gagal ${failed.length}');
-      }
-    } catch (e) {
-      _showMessage(e.toString());
-    } finally {
-      if (mounted) setState(() => _flashSaleCleanupBusy = false);
     }
   }
 

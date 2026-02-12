@@ -201,8 +201,9 @@ class ApiService {
   }) async {
     final query = <String, String>{};
     if (name != null) query['name'] = name;
-    if (activePlaylistId != null)
+    if (activePlaylistId != null) {
       query['active_playlist_id'] = activePlaylistId;
+    }
     if (gridPreset != null) query['grid_preset'] = gridPreset;
     if (transitionDurationSec != null) {
       query['transition_duration_sec'] = transitionDurationSec.toString();

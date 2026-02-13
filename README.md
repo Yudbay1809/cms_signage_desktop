@@ -16,9 +16,11 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - Central playlist apply mode: assigning playlist to other devices now references source playlist directly (no automatic clone per device).
 - Auto refresh toggle removed to reduce background load; refresh now relies on realtime events and manual refresh.
 - Playlist validation hardened in UI: photo + video cannot be mixed in the same playlist.
+- Media tab now supports checkbox multi-select + bulk delete (`Hapus Terpilih`) for faster cleanup.
 
 ## Features
 - Media management (upload, preview, delete)
+- Bulk media cleanup with multi-select checkbox in Media tab
 - Playlist builder with ordering
 - Schedule management (create, edit, delete)
 - Device management (orientation and cleanup)

@@ -211,6 +211,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   String _playlistMediaQuery = '';
   String _playlistMediaFilter = 'all';
   final List<String> _selectedMediaIds = [];
+  final Set<String> _selectedMediaForDeleteIds = {};
   final Map<String, int> _mediaDurations = {};
   final Map<String, String> _screenGridPresets = {};
   final Map<String, int> _screenTransitionDurations = {};
@@ -507,6 +508,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
         final availableMediaIds = mediaPage.items.map((m) => m.id).toSet();
         _selectedMediaIds.removeWhere((id) => !availableMediaIds.contains(id));
+        _selectedMediaForDeleteIds.removeWhere(
+          (id) => !availableMediaIds.contains(id),
+        );
         _mediaDurations.removeWhere(
           (key, _) => !availableMediaIds.contains(key),
         );
@@ -1230,9 +1234,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   List<MediaInfo> _flashSaleMediaOptions() {
     final rows = [..._media];
-    rows.sort(
-      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-    );
+    rows.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return rows;
   }
 
@@ -1468,7 +1470,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             final id = '${row['id']}'.trim();
             if (id.isNotEmpty) mediaIds.add(id);
           }
-          final missing = requiredMediaIds.where((id) => !mediaIds.contains(id));
+          final missing = requiredMediaIds.where(
+            (id) => !mediaIds.contains(id),
+          );
           _flashSaleMissingMediaByDevice[deviceId] = missing
               .map(_flashSaleMediaLabelById)
               .toList();
@@ -1706,7 +1710,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       if (failed.isEmpty) {
         _showMessage('Flash Sale dinonaktifkan di semua device terpilih');
       } else {
-        _showMessage('Sebagian gagal menonaktifkan Flash Sale: ${failed.join(', ')}');
+        _showMessage(
+          'Sebagian gagal menonaktifkan Flash Sale: ${failed.join(', ')}',
+        );
       }
     } finally {
       if (mounted) setState(() => _flashSaleBusy = false);
@@ -1913,8 +1919,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
     if (markAsFlashSale) {
       final normalizedFlashNote = (flashNote ?? template.flashNote).trim();
-      final normalizedFlashItems =
-          (flashItemsJson ?? template.flashItemsJson).trim();
+      final normalizedFlashItems = (flashItemsJson ?? template.flashItemsJson)
+          .trim();
       await _api.updatePlaylistFlashSale(foundPlaylistId, true);
       await _api.updatePlaylistFlashMeta(
         foundPlaylistId,
@@ -1967,7 +1973,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         }
       }
       if (failed.isEmpty) {
-        _showMessage('Playlist per device berhasil diterapkan. Grid tidak berubah.');
+        _showMessage(
+          'Playlist per device berhasil diterapkan. Grid tidak berubah.',
+        );
       } else {
         _showMessage(
           'Sebagian gagal menerapkan playlist ke: ${failed.join(', ')}',
@@ -2089,6 +2097,47 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     } catch (e) {
       _showMessage(e.toString());
     }
+  }
+
+  Future<void> _deleteSelectedMedia() async {
+    if (_selectedMediaForDeleteIds.isEmpty) {
+      _showMessage('Pilih media yang ingin dihapus');
+      return;
+    }
+    final total = _selectedMediaForDeleteIds.length;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Hapus media terpilih'),
+          content: Text('Yakin hapus $total media terpilih?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Hapus'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+
+    final selectedIds = _selectedMediaForDeleteIds.toList(growable: false);
+    var deleted = 0;
+    for (final mediaId in selectedIds) {
+      try {
+        await _api.deleteMedia(mediaId);
+        deleted += 1;
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    _selectedMediaForDeleteIds.clear();
+    _showMessage('$deleted/$total media berhasil dihapus');
+    await _refresh();
   }
 
   String _absoluteUrl(String path) {
@@ -3060,6 +3109,37 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 runSpacing: 8,
                 children: [
                   Text('Media loaded: ${_media.length} / $_mediaTotal'),
+                  Text('Terpilih: ${_selectedMediaForDeleteIds.length}'),
+                  OutlinedButton.icon(
+                    onPressed: _media.isEmpty
+                        ? null
+                        : () {
+                            setState(() {
+                              if (_selectedMediaForDeleteIds.length ==
+                                  _media.length) {
+                                _selectedMediaForDeleteIds.clear();
+                              } else {
+                                _selectedMediaForDeleteIds
+                                  ..clear()
+                                  ..addAll(_media.map((m) => m.id));
+                              }
+                            });
+                          },
+                    icon: Icon(
+                      _selectedMediaForDeleteIds.length == _media.length &&
+                              _media.isNotEmpty
+                          ? Icons.check_box
+                          : Icons.check_box_outline_blank,
+                    ),
+                    label: const Text('Pilih Semua'),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: _selectedMediaForDeleteIds.isEmpty
+                        ? null
+                        : _deleteSelectedMedia,
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Hapus Terpilih'),
+                  ),
                   if (_mediaOffset < _mediaTotal)
                     OutlinedButton(
                       onPressed: _mediaPageLoading ? null : _loadMoreMedia,
@@ -3075,12 +3155,34 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   itemCount: _media.length,
                   itemBuilder: (context, i) {
                     final m = _media[i];
+                    final selected = _selectedMediaForDeleteIds.contains(m.id);
                     final inferredType = _isVideoPath(m.path)
                         ? 'video'
                         : _isImagePath(m.path)
                         ? 'image'
                         : m.type;
                     return ListTile(
+                      leading: Checkbox(
+                        value: selected,
+                        onChanged: (value) {
+                          setState(() {
+                            if (value == true) {
+                              _selectedMediaForDeleteIds.add(m.id);
+                            } else {
+                              _selectedMediaForDeleteIds.remove(m.id);
+                            }
+                          });
+                        },
+                      ),
+                      onTap: () {
+                        setState(() {
+                          if (selected) {
+                            _selectedMediaForDeleteIds.remove(m.id);
+                          } else {
+                            _selectedMediaForDeleteIds.add(m.id);
+                          }
+                        });
+                      },
                       title: Text(m.name),
                       subtitle: Text('$inferredType | ${m.path}'),
                       trailing: Row(

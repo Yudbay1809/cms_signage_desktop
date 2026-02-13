@@ -127,7 +127,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     '.svg',
   ];
 
-  Timer? _autoRefreshTimer;
   Timer? _realtimeReconnectTimer;
   Timer? _realtimeRefreshDebounce;
   WebSocket? _realtimeSocket;
@@ -218,7 +217,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   int _gridTargetTransitionDuration = 1;
   bool _uploading = false;
   double _uploadProgress = 0.0;
-  bool _autoRefresh = true;
   int _mediaTotal = 0;
   int _mediaOffset = 0;
   static const int _mediaPageSize = 120;
@@ -231,7 +229,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     super.initState();
     _tabController = TabController(length: 7, vsync: this);
     _initializeAndRefresh();
-    _setAutoRefresh(true);
   }
 
   ApiService get _api => ApiService(
@@ -241,7 +238,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   @override
   void dispose() {
-    _autoRefreshTimer?.cancel();
     _realtimeReconnectTimer?.cancel();
     _realtimeRefreshDebounce?.cancel();
     _closeRealtimeSocket();
@@ -255,16 +251,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     _flashSaleCountdownController.dispose();
     _flashSaleNoteController.dispose();
     super.dispose();
-  }
-
-  void _setAutoRefresh(bool enabled) {
-    _autoRefreshTimer?.cancel();
-    setState(() => _autoRefresh = enabled);
-    if (!enabled) return;
-
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      _refresh();
-    });
   }
 
   void _closeRealtimeSocket() {
@@ -798,6 +784,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Media tidak ditemukan');
       return;
     }
+    final incomingKind = _mediaKind(media);
+    final existingKinds = _managePlaylistItems
+        .map((item) => item.mediaType.trim().toLowerCase())
+        .where((item) => item == 'image' || item == 'video')
+        .toSet();
+    if (existingKinds.isNotEmpty &&
+        incomingKind.isNotEmpty &&
+        !existingKinds.contains(incomingKind)) {
+      _showMessage(
+        'Playlist tidak boleh campur foto dan video. Playlist ini hanya untuk ${existingKinds.first}.',
+      );
+      return;
+    }
     final isVideo = media.type == 'video' || _isVideoPath(media.path);
     final order = _managePlaylistItems.isEmpty
         ? 1
@@ -1170,6 +1169,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   bool _isImagePath(String path) {
     final name = path.toLowerCase();
     return _imageExtensions.any(name.endsWith);
+  }
+
+  String _mediaKind(MediaInfo media) {
+    if (media.type == 'video' || _isVideoPath(media.path)) return 'video';
+    if (media.type == 'image' || _isImagePath(media.path)) return 'image';
+    return '';
   }
 
   List<MediaInfo> _filteredMediaForPlaylist() {
@@ -1793,6 +1798,23 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Pilih media untuk playlist');
       return;
     }
+    final selectedKinds = <String>{};
+    for (final mediaId in _selectedMediaIds) {
+      MediaInfo? media;
+      for (final m in _media) {
+        if (m.id == mediaId) {
+          media = m;
+          break;
+        }
+      }
+      if (media == null) continue;
+      final kind = _mediaKind(media);
+      if (kind.isNotEmpty) selectedKinds.add(kind);
+    }
+    if (selectedKinds.length > 1) {
+      _showMessage('Playlist video dan foto tidak boleh dicampur.');
+      return;
+    }
     final name = await _promptPlaylistName();
     if (name == null) return;
 
@@ -1882,25 +1904,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           'Playlist "${template.name}" belum ada di device target.',
         );
       }
+      // Central playlist mode: do not clone playlist into target device.
+      // Assign screen.active_playlist_id directly to source playlist id.
       final targetScreen = screens.first;
-      final created = await _api.createPlaylist(
-        targetScreen.id,
-        template.name,
-        isFlashSale: markAsFlashSale || template.isFlashSale,
-      );
-      final sourceItems = await _api.listPlaylistItems(template.playlistId);
-      var nextOrder = 1;
-      for (final item in sourceItems) {
-        await _api.addPlaylistItem(
-          playlistId: created.id,
-          mediaId: item.mediaId,
-          order: nextOrder,
-          durationSec: item.durationSec,
-        );
-        nextOrder += 1;
-      }
       foundScreenId = targetScreen.id;
-      foundPlaylistId = created.id;
+      foundPlaylistId = template.playlistId;
     }
 
     if (markAsFlashSale) {
@@ -1952,18 +1960,17 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           await _applyTemplateToDevice(
             template: template,
             targetDeviceId: deviceId,
+            createIfMissing: true,
           );
         } catch (_) {
           failed.add(deviceId);
         }
       }
       if (failed.isEmpty) {
-        _showMessage(
-          'Playlist per device berhasil diterapkan. Grid tidak berubah.',
-        );
+        _showMessage('Playlist per device berhasil diterapkan. Grid tidak berubah.');
       } else {
         _showMessage(
-          'Sebagian gagal. Playlist dengan nama yang sama belum ada di: ${failed.join(', ')}',
+          'Sebagian gagal menerapkan playlist ke: ${failed.join(', ')}',
         );
       }
       await _loadPlaylistLibrary();
@@ -1974,17 +1981,28 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   List<_PlaylistTemplate> _playlistsForDevice(String deviceId) {
-    return _playlistLibrary.where((p) => p.deviceId == deviceId).toList();
+    // Source tetap dari playlist library (hasil Kelola Playlist),
+    // tapi untuk Kelola Penayangan tampilkan unik per nama agar tidak bertumpuk.
+    final ordered = <_PlaylistTemplate>[
+      ..._playlistLibrary.where((p) => p.deviceId == deviceId),
+      ..._playlistLibrary.where((p) => p.deviceId != deviceId),
+    ];
+    final seenByName = <String>{};
+    final unique = <_PlaylistTemplate>[];
+    for (final item in ordered) {
+      final key = _normalizedText(item.name);
+      if (key.isEmpty || seenByName.contains(key)) continue;
+      seenByName.add(key);
+      unique.add(item);
+    }
+    return unique;
   }
 
   List<String> _bulkPlaylistNameOptions() {
     final names = <String>{};
-    for (final deviceId in _selectedDeviceIds) {
-      final playlists = _playlistsForDevice(deviceId);
-      for (final playlist in playlists) {
-        final value = playlist.name.trim();
-        if (value.isNotEmpty) names.add(value);
-      }
+    for (final playlist in _playlistLibrary) {
+      final value = playlist.name.trim();
+      if (value.isNotEmpty) names.add(value);
     }
     final result = names.toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -2829,16 +2847,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Switch(
-                            value: _autoRefresh,
-                            onChanged: _setAutoRefresh,
-                          ),
-                          const Text('Auto refresh (30s)'),
-                        ],
-                      ),
                       if (_lastRefreshAt != null)
                         Text('Last: ${_lastRefreshAt!.toLocal()}'),
                       if (_refreshing)
@@ -3970,7 +3978,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               border: Border.all(color: const Color(0xFFBAE6FD)),
             ),
             child: const Text(
-              'Playlist bisa diterapkan ke banyak device. Jika playlist belum ada di device target, sistem akan membuat salinan otomatis.',
+              'Playlist bisa diterapkan ke banyak device sebagai referensi terpusat. Playlist foto dan video dipisah (tidak boleh dicampur).',
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF0C4A6E),

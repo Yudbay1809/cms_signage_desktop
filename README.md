@@ -12,6 +12,11 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - CMS is aligned with backend final contract and websocket realtime refresh behavior.
 - Recommended production setup uses static backend base URL on LAN.
 
+## Latest Updates (2026-02-13)
+- Central playlist apply mode: assigning playlist to other devices now references source playlist directly (no automatic clone per device).
+- Auto refresh toggle removed to reduce background load; refresh now relies on realtime events and manual refresh.
+- Playlist validation hardened in UI: photo + video cannot be mixed in the same playlist.
+
 ## Features
 - Media management (upload, preview, delete)
 - Playlist builder with ordering

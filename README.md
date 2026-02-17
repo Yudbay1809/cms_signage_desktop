@@ -12,7 +12,14 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - CMS is aligned with backend final contract and websocket realtime refresh behavior.
 - Recommended production setup uses static backend base URL on LAN.
 
-## Latest Updates (2026-02-13)
+## Latest Updates (2026-02-17)
+- Flash Sale scheduler UX simplified:
+  - time input now focused on `HH:MM`
+  - quick presets + time picker
+  - clearer 2-step schedule flow (day -> time)
+- Devices tab now includes **Cek Download Media** to verify per-device cache completeness from backend.
+- Startup/background snackbar notification spam is disabled by default; manual toggle available (`Popup Notif: ON/OFF`).
+- Previous updates:
 - Central playlist apply mode: assigning playlist to other devices now references source playlist directly (no automatic clone per device).
 - Auto refresh toggle removed to reduce background load; refresh now relies on realtime events and manual refresh.
 - Playlist validation hardened in UI: photo + video cannot be mixed in the same playlist.
@@ -29,6 +36,7 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - Flash Sale campaign editor (note, countdown, products + media)
 - Apply Flash Sale now/scheduled directly per device (no playlist binding)
 - Flash Sale media sync checker for selected target devices
+- Device media download completeness checker (`Cek Download Media`) via backend cache status API
 
 ## Tech Stack
 - Flutter / Dart

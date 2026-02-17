@@ -172,6 +172,23 @@ class ApiService {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> fetchDeviceMediaCacheStatus(
+    String deviceId,
+  ) async {
+    final res = await _sendWithRetry(
+      () => http.get(
+        _uri('/devices/$deviceId/media-cache-status'),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception(
+        'Failed to fetch media cache status: ${_formatHttpError(res)}',
+      );
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   Future<List<ScreenInfo>> listScreensForDevice(String deviceId) async {
     final data = await fetchDeviceConfigRaw(deviceId);
     final rawScreens = data['screens'];

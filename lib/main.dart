@@ -197,6 +197,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   DateTime? _flashSaleMediaCheckedAt;
   final Map<String, List<String>> _flashSaleMissingMediaByDevice = {};
   final Map<String, String> _flashSaleMediaErrorByDevice = {};
+  bool _flashSaleScheduleCheckBusy = false;
+  DateTime? _flashSaleScheduleCheckedAt;
+  final Map<String, Map<String, dynamic>> _flashSaleRuntimeByDevice = {};
   String? _gridTargetDeviceId;
   String _gridTargetPreset = '1x1';
   bool _gridTargetLoading = false;
@@ -224,11 +227,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   bool _mediaPageLoading = false;
   String _mediaServerQuery = '';
   String _mediaServerType = 'all';
+  String _lastSnackMessage = '';
+  DateTime? _lastSnackAt;
+  DateTime _suppressMessageUntil = DateTime.now();
+  bool _showSnackbarNotifications = false;
+  bool _deviceMediaCheckBusy = false;
+  DateTime? _deviceMediaCheckedAt;
+  final Map<String, Map<String, dynamic>> _deviceMediaStatusByDevice = {};
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 7, vsync: this);
+    _suppressMessageUntil = DateTime.now().add(const Duration(seconds: 20));
     _initializeAndRefresh();
   }
 
@@ -280,7 +291,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   void _queueRealtimeRefresh() {
     if (_realtimeRefreshDebounce?.isActive == true) return;
     _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 500), () {
-      _refresh();
+      _refresh(silent: true);
     });
   }
 
@@ -446,11 +457,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     if (found != null && found != _baseUrlController.text.trim()) {
       _baseUrlController.text = found;
     }
-    await _refresh();
+    await _refresh(silent: true);
     _connectRealtime();
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({bool silent = false}) async {
     if (_refreshing) return;
     final baseUrl = _normalizeBaseUrl(_baseUrlController.text);
     if (baseUrl != _baseUrlController.text.trim()) {
@@ -466,7 +477,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       }
     }
     if (baseUrl.isEmpty) {
-      _showMessage('Base URL belum diisi');
+      if (!silent) {
+        _showMessage('Base URL belum diisi');
+      }
       return;
     }
     _connectRealtime();
@@ -515,13 +528,15 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           (key, _) => !availableMediaIds.contains(key),
         );
       });
-      await _loadScreens();
+      await _loadScreens(silent: silent);
       if (_gridTargetDeviceId != null && _gridTargetPreviewItems.isEmpty) {
         await _loadGridPreviewForDevice(_gridTargetDeviceId!);
       }
     } catch (e) {
       setState(() => _lastError = e.toString());
-      _showMessage(e.toString());
+      if (!silent) {
+        _showMessage(e.toString());
+      }
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -550,7 +565,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
-  Future<void> _loadScreens() async {
+  Future<void> _loadScreens({bool silent = false}) async {
     if (_selectedDeviceIds.isEmpty) {
       setState(() {
         _playlists = [];
@@ -603,15 +618,17 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               _sanitizeTransitionDuration(activeScreen?.transitionDurationSec);
         }
       });
-      await _loadPlaylists();
-      await _loadPlaylistLibrary();
+      await _loadPlaylists(silent: silent);
+      await _loadPlaylistLibrary(silent: silent);
       await _refreshNowPlayingForSelectedDevices();
     } catch (e) {
-      _showMessage(e.toString());
+      if (!silent) {
+        _showMessage(e.toString());
+      }
     }
   }
 
-  Future<void> _loadPlaylistLibrary() async {
+  Future<void> _loadPlaylistLibrary({bool silent = false}) async {
     if (_devices.isEmpty) {
       setState(() {
         _playlistLibrary = [];
@@ -660,10 +677,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _playlistLibrary = templates;
     });
     _syncDevicePlaylistSelections();
-    await _loadManagePlaylistData();
+    await _loadManagePlaylistData(silent: silent);
   }
 
-  Future<void> _loadPlaylists() async {
+  Future<void> _loadPlaylists({bool silent = false}) async {
     if (_selectedScreenId == null) return;
     try {
       final playlists = await _api.listPlaylists(_selectedScreenId!);
@@ -685,11 +702,13 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         }
       });
     } catch (e) {
-      _showMessage(e.toString());
+      if (!silent) {
+        _showMessage(e.toString());
+      }
     }
   }
 
-  Future<void> _loadManagePlaylistData() async {
+  Future<void> _loadManagePlaylistData({bool silent = false}) async {
     final playlistId = _managePlaylistId;
     if (playlistId == null || playlistId.isEmpty) {
       if (!mounted) return;
@@ -766,7 +785,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     } catch (e) {
       if (!mounted) return;
       setState(() => _managePlaylistLoading = false);
-      _showMessage(e.toString());
+      if (!silent) {
+        _showMessage(e.toString());
+      }
     }
   }
 
@@ -939,14 +960,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     for (final deviceId in _selectedDeviceIds) {
       final devicePlaylists = _playlistsForDevice(deviceId);
       final current = _devicePlaylistSelection[deviceId];
-      if (current != null &&
-          devicePlaylists.any((p) => p.playlistId == current)) {
-        continue;
-      }
       final nowPlayingId = _deviceNowPlayingPlaylistId[deviceId];
       if (nowPlayingId != null &&
           devicePlaylists.any((p) => p.playlistId == nowPlayingId)) {
+        // Keep UI aligned with actual current playback on device.
         _devicePlaylistSelection[deviceId] = nowPlayingId;
+      } else if (current != null &&
+          devicePlaylists.any((p) => p.playlistId == current)) {
+        _devicePlaylistSelection[deviceId] = current;
       } else if (devicePlaylists.isNotEmpty) {
         _devicePlaylistSelection[deviceId] = devicePlaylists.first.playlistId;
       } else {
@@ -1090,9 +1111,36 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     });
   }
 
-  void _showMessage(String msg) {
+  void _showMessage(String msg, {bool force = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    final message = msg.trim();
+    if (message.isEmpty) return;
+    if (!force && !_showSnackbarNotifications) return;
+    if (!force && DateTime.now().isBefore(_suppressMessageUntil)) return;
+
+    final now = DateTime.now();
+    final lastAt = _lastSnackAt;
+    final sameAsLast = message == _lastSnackMessage;
+    final isDuplicateBurst =
+        sameAsLast &&
+        lastAt != null &&
+        now.difference(lastAt) < const Duration(seconds: 15);
+    final isFlood =
+        !sameAsLast &&
+        lastAt != null &&
+        now.difference(lastAt) < const Duration(seconds: 3);
+
+    if (!force && (isDuplicateBurst || isFlood)) return;
+
+    _lastSnackMessage = message;
+    _lastSnackAt = now;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar(reason: SnackBarClosedReason.hide)
+      ..showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
+      );
   }
 
   Future<void> _pickFile() async {
@@ -1195,17 +1243,41 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }).toList();
   }
 
-  String _formatHms(String input) {
+  String _formatHm(String input) {
     final cleaned = input.trim();
     if (cleaned.isEmpty) return '';
     final parts = cleaned.split(':');
     if (parts.length < 2 || parts.length > 3) return '';
     final h = int.tryParse(parts[0]);
     final m = int.tryParse(parts[1]);
-    final s = parts.length == 3 ? int.tryParse(parts[2]) : 0;
-    if (h == null || m == null || s == null) return '';
-    if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return '';
-    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    if (h == null || m == null) return '';
+    if (h < 0 || h > 23 || m < 0 || m > 59) return '';
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+  }
+
+  String _hmToHms(String hm) {
+    final normalized = _formatHm(hm);
+    if (normalized.isEmpty) return '';
+    return '$normalized:00';
+  }
+
+  TimeOfDay? _timeOfDayFromHm(String input) {
+    final hm = _formatHm(input);
+    if (hm.isEmpty) return null;
+    final parts = hm.split(':');
+    return TimeOfDay(
+      hour: int.parse(parts[0]),
+      minute: int.parse(parts[1]),
+    );
+  }
+
+  String _timeOfDayToHm(TimeOfDay value) {
+    return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _currentTimeHm({DateTime? at}) {
+    final now = at ?? DateTime.now();
+    return '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
   }
 
   List<int> _flashSaleCountdownPresetSeconds() {
@@ -1232,6 +1304,25 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   String _normalizedText(String value) => value.trim().toLowerCase();
 
+  String _normalizeMediaId(String value) {
+    var out = value.trim();
+    if (out.startsWith('{') && out.endsWith('}') && out.length > 2) {
+      out = out.substring(1, out.length - 1);
+    }
+    return out.trim();
+  }
+
+  String _resolveMediaIdToKnown(String mediaId) {
+    final target = _normalizeMediaId(mediaId);
+    if (target.isEmpty) return '';
+    for (final media in _media) {
+      if (_normalizeMediaId(media.id) == target) {
+        return media.id;
+      }
+    }
+    return target;
+  }
+
   List<MediaInfo> _flashSaleMediaOptions() {
     final rows = [..._media];
     rows.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -1239,15 +1330,151 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   String _flashSaleMediaLabelById(String? mediaId) {
-    final id = (mediaId ?? '').trim();
+    final id = _resolveMediaIdToKnown(mediaId ?? '');
     if (id.isEmpty) return 'Media belum dipilih';
     for (final media in _media) {
-      if (media.id == id) {
+      if (_normalizeMediaId(media.id) == _normalizeMediaId(id)) {
         final name = media.name.trim().isEmpty ? media.id : media.name.trim();
         return '$name (${media.type})';
       }
     }
     return '$id (media tidak ditemukan di list saat ini)';
+  }
+
+  bool _flashSaleMediaExists(String mediaId) {
+    final target = _normalizeMediaId(mediaId);
+    if (target.isEmpty) return false;
+    for (final media in _media) {
+      if (_normalizeMediaId(media.id) == target) return true;
+    }
+    return false;
+  }
+
+  ({String message, Color color}) _flashSaleProductValidation(
+    _FlashSaleProductDraft item,
+  ) {
+    final name = item.name.trim();
+    if (name.isEmpty) {
+      return (
+        message: 'Nama produk belum diisi',
+        color: const Color(0xFFB45309),
+      );
+    }
+    final mediaId = _resolveMediaIdToKnown(item.mediaId);
+    if (mediaId.isEmpty) {
+      return (message: 'Media belum dipilih', color: const Color(0xFFB91C1C));
+    }
+    if (!_flashSaleMediaExists(mediaId)) {
+      return (message: 'Media tidak ditemukan', color: const Color(0xFFB91C1C));
+    }
+    return (message: 'Produk siap tayang', color: const Color(0xFF166534));
+  }
+
+  bool _isFlashSaleProductValid(_FlashSaleProductDraft item) {
+    final mediaId = _resolveMediaIdToKnown(item.mediaId);
+    return item.name.trim().isNotEmpty &&
+        mediaId.isNotEmpty &&
+        _flashSaleMediaExists(mediaId);
+  }
+
+  int _flashSaleValidProductsCount() {
+    var count = 0;
+    for (final item in _flashSaleProducts) {
+      if (_isFlashSaleProductValid(item)) count += 1;
+    }
+    return count;
+  }
+
+  int _flashSaleOnlineTargetCount() {
+    final targets = _flashSaleTargetDeviceIds().toSet();
+    if (targets.isEmpty) return 0;
+    return _devices
+        .where(
+          (device) =>
+              targets.contains(device.id) &&
+              device.status.toLowerCase().trim() == 'online',
+        )
+        .length;
+  }
+
+  int _flashSaleMediaReadyTargetCount() {
+    if (_flashSaleMediaCheckedAt == null) return 0;
+    final targets = _flashSaleTargetDeviceIds();
+    if (targets.isEmpty) return 0;
+    var ready = 0;
+    for (final id in targets) {
+      if (_flashSaleMediaErrorByDevice[id] != null) continue;
+      if (!_flashSaleMissingMediaByDevice.containsKey(id)) continue;
+      final missing = _flashSaleMissingMediaByDevice[id] ?? const [];
+      if (missing.isEmpty) ready += 1;
+    }
+    return ready;
+  }
+
+  int _flashSaleActiveRuntimeCount() {
+    var active = 0;
+    for (final entry in _flashSaleRuntimeByDevice.values) {
+      if (entry['active'] == true) active += 1;
+    }
+    return active;
+  }
+
+  String _formatScheduleDaysLabel(String? csv) {
+    final dayLabels = <int, String>{
+      0: 'Sen',
+      1: 'Sel',
+      2: 'Rab',
+      3: 'Kam',
+      4: 'Jum',
+      5: 'Sab',
+      6: 'Min',
+    };
+    final ids =
+        (csv ?? '')
+            .split(',')
+            .map((v) => int.tryParse(v.trim()))
+            .whereType<int>()
+            .where((v) => dayLabels.containsKey(v))
+            .toList()
+          ..sort();
+    if (ids.isEmpty) return '-';
+    return ids.map((v) => dayLabels[v]!).join(', ');
+  }
+
+  Set<int> _parseScheduleDaysCsv(String? csv) {
+    return (csv ?? '')
+        .split(',')
+        .map((v) => int.tryParse(v.trim()))
+        .whereType<int>()
+        .where((v) => v >= 0 && v <= 6)
+        .toSet();
+  }
+
+  Future<void> _editFlashSaleScheduleForDevice(
+    String deviceId,
+    Map<String, dynamic> runtime,
+  ) async {
+    final days = _parseScheduleDaysCsv(runtime['schedule_days']?.toString());
+    final start = _formatHm((runtime['schedule_start_time'] ?? '').toString());
+    final end = _formatHm((runtime['schedule_end_time'] ?? '').toString());
+
+    setState(() {
+      _flashSaleDeviceIds
+        ..clear()
+        ..add(deviceId);
+      if (days.isNotEmpty) {
+        _flashSaleScheduleDays
+          ..clear()
+          ..addAll(days);
+      }
+      if (start.isNotEmpty) {
+        _flashSaleScheduleStartController.text = start;
+      }
+      if (end.isNotEmpty) {
+        _flashSaleScheduleEndController.text = end;
+      }
+    });
+    await _openScheduleFlashSaleDialog();
   }
 
   int? _flashSaleCountdownFromInput() {
@@ -1290,7 +1517,16 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   String _flashSaleProductsJson() {
     final rows = _flashSaleProducts
-        .map((item) => item.toJson())
+        .map(
+          (item) => {
+            'name': item.name,
+            'brand': item.brand,
+            'normal_price': item.normalPrice,
+            'promo_price': item.promoPrice,
+            'stock': item.stock,
+            'media_id': _resolveMediaIdToKnown(item.mediaId),
+          },
+        )
         .where((item) => (item['name'] ?? '').toString().trim().isNotEmpty)
         .toList();
     return jsonEncode(rows);
@@ -1309,7 +1545,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     );
     final stockController = TextEditingController(text: current.stock);
     final mediaOptions = _flashSaleMediaOptions();
-    String selectedMediaId = current.mediaId.trim();
+    String selectedMediaId = _resolveMediaIdToKnown(current.mediaId);
     final mediaExists = mediaOptions.any((item) => item.id == selectedMediaId);
     if (selectedMediaId.isNotEmpty && !mediaExists) {
       selectedMediaId = '';
@@ -1414,7 +1650,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         normalPrice: normalPriceController.text.trim(),
         promoPrice: promoPriceController.text.trim(),
         stock: stockController.text.trim(),
-        mediaId: selectedMediaId.trim(),
+        mediaId: _resolveMediaIdToKnown(selectedMediaId),
       );
       _resetFlashSaleMediaCheckStatus();
     });
@@ -1429,7 +1665,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
 
   Set<String> _flashSaleProductMediaIds() {
     return _flashSaleProducts
-        .map((item) => item.mediaId.trim())
+        .map((item) => _resolveMediaIdToKnown(item.mediaId))
         .where((id) => id.isNotEmpty)
         .toSet();
   }
@@ -1438,6 +1674,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     _flashSaleMediaCheckedAt = null;
     _flashSaleMissingMediaByDevice.clear();
     _flashSaleMediaErrorByDevice.clear();
+    _flashSaleScheduleCheckedAt = null;
+    _flashSaleRuntimeByDevice.clear();
   }
 
   Future<void> _checkFlashSaleMediaSyncStatus() async {
@@ -1467,11 +1705,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           final mediaIds = <String>{};
           for (final row in mediaRaw) {
             if (row is! Map) continue;
-            final id = '${row['id']}'.trim();
+            final id = _normalizeMediaId('${row['id']}');
             if (id.isNotEmpty) mediaIds.add(id);
           }
           final missing = requiredMediaIds.where(
-            (id) => !mediaIds.contains(id),
+            (id) => !mediaIds.contains(_normalizeMediaId(id)),
           );
           _flashSaleMissingMediaByDevice[deviceId] = missing
               .map(_flashSaleMediaLabelById)
@@ -1484,6 +1722,139 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     } finally {
       if (mounted) setState(() => _flashSaleMediaCheckBusy = false);
     }
+  }
+
+  Future<void> _loadFlashSaleRuntimeStatus() async {
+    if (_flashSaleScheduleCheckBusy) return;
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device target untuk cek jadwal/runtime');
+      return;
+    }
+    setState(() {
+      _flashSaleScheduleCheckBusy = true;
+      _flashSaleRuntimeByDevice.clear();
+    });
+    try {
+      for (final deviceId in targetDeviceIds) {
+        try {
+          final config = await _api.fetchDeviceConfigRaw(deviceId);
+          final flash = config['flash_sale'];
+          if (flash is Map<String, dynamic>) {
+            _flashSaleRuntimeByDevice[deviceId] = flash;
+          } else if (flash is Map) {
+            _flashSaleRuntimeByDevice[deviceId] = flash.cast<String, dynamic>();
+          } else {
+            _flashSaleRuntimeByDevice[deviceId] = const {};
+          }
+        } catch (e) {
+          _flashSaleRuntimeByDevice[deviceId] = {'error': e.toString()};
+        }
+      }
+      _flashSaleScheduleCheckedAt = DateTime.now();
+    } finally {
+      if (mounted) setState(() => _flashSaleScheduleCheckBusy = false);
+    }
+  }
+
+  Future<void> _openFlashSalePreviewDialog() async {
+    final note = _flashSaleNoteFromInput();
+    final countdownSec = _flashSaleCountdownFromInput() ?? 0;
+    final products = _flashSaleProducts
+        .where((item) => item.name.trim().isNotEmpty)
+        .toList();
+    if (note.isEmpty || countdownSec <= 0 || products.isEmpty) {
+      _showMessage('Isi note, countdown, dan minimal 1 produk sebelum preview');
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        int remaining = 10;
+        Timer? timer;
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            timer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+              if (!context.mounted) {
+                t.cancel();
+                return;
+              }
+              if (remaining <= 1) {
+                t.cancel();
+                Navigator.of(ctx).pop();
+                return;
+              }
+              setLocalState(() => remaining -= 1);
+            });
+            return AlertDialog(
+              title: Text('Preview Flash Sale (${remaining}s)'),
+              content: SizedBox(
+                width: 620,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Running text: $note',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Countdown campaign: ${_flashSaleCountdownLabel(countdownSec)}',
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Produk:',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 240),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: products.length,
+                        itemBuilder: (context, index) {
+                          final item = products[index];
+                          final validation = _flashSaleProductValidation(item);
+                          return ListTile(
+                            dense: true,
+                            leading: CircleAvatar(
+                              radius: 12,
+                              backgroundColor: validation.color.withValues(
+                                alpha: 0.15,
+                              ),
+                              child: Text('${index + 1}'),
+                            ),
+                            title: Text(
+                              item.name.trim().isEmpty
+                                  ? 'Produk ${index + 1}'
+                                  : item.name,
+                            ),
+                            subtitle: Text(
+                              '${item.brand} | ${_flashSaleMediaLabelById(item.mediaId)}',
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    timer?.cancel();
+                    Navigator.of(ctx).pop();
+                  },
+                  child: const Text('Tutup'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _runFlashSaleNow() async {
@@ -1539,20 +1910,20 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
 
     final dayLabels = <int, String>{
-      1: 'Sen',
-      2: 'Sel',
-      3: 'Rab',
-      4: 'Kam',
-      5: 'Jum',
-      6: 'Sab',
-      0: 'Min',
+      0: 'Sen',
+      1: 'Sel',
+      2: 'Rab',
+      3: 'Kam',
+      4: 'Jum',
+      5: 'Sab',
+      6: 'Min',
     };
     final selectedDays = <int>{..._flashSaleScheduleDays};
     final startController = TextEditingController(
-      text: _flashSaleScheduleStartController.text,
+      text: _formatHm(_flashSaleScheduleStartController.text),
     );
     final endController = TextEditingController(
-      text: _flashSaleScheduleEndController.text,
+      text: _formatHm(_flashSaleScheduleEndController.text),
     );
 
     final confirmed = await showDialog<bool>(
@@ -1569,8 +1940,71 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Text(
+                        'Target ${targetDeviceIds.length} device landscape.',
+                        style: TextStyle(
+                          color: Colors.blueGrey.shade700,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
                       const Text(
-                        'Atur hari dan jam tayang. Countdown mengikuti nilai Flash Sale.',
+                        '1) Pilih Hari',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ActionChip(
+                            label: const Text('Setiap Hari'),
+                            onPressed: () {
+                              setLocalState(() {
+                                selectedDays
+                                  ..clear()
+                                  ..addAll(const {0, 1, 2, 3, 4, 5, 6});
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Hari Kerja'),
+                            onPressed: () {
+                              setLocalState(() {
+                                selectedDays
+                                  ..clear()
+                                  ..addAll(const {0, 1, 2, 3, 4});
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Akhir Pekan'),
+                            onPressed: () {
+                              setLocalState(() {
+                                selectedDays
+                                  ..clear()
+                                  ..addAll(const {5, 6});
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Hari Ini'),
+                            onPressed: () {
+                              final today = DateTime.now().weekday - 1;
+                              setLocalState(() {
+                                selectedDays
+                                  ..clear()
+                                  ..add(today);
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Kosongkan'),
+                            onPressed: () {
+                              setLocalState(selectedDays.clear);
+                            },
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 10),
                       Wrap(
@@ -1594,26 +2028,147 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         }).toList(),
                       ),
                       const SizedBox(height: 10),
-                      Row(
+                      const Text('2) Pilih Jam (HH:MM)'),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
-                          Expanded(
-                            child: TextField(
-                              controller: startController,
-                              decoration: const InputDecoration(
-                                labelText: 'Jam mulai (HH:MM)',
-                              ),
-                            ),
+                          ActionChip(
+                            label: const Text('Jam Kerja 08-17'),
+                            onPressed: () {
+                              setLocalState(() {
+                                startController.text = '08:00';
+                                endController.text = '17:00';
+                              });
+                            },
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: endController,
-                              decoration: const InputDecoration(
-                                labelText: 'Jam selesai (HH:MM)',
-                              ),
-                            ),
+                          ActionChip(
+                            label: const Text('Retail 09-21'),
+                            onPressed: () {
+                              setLocalState(() {
+                                startController.text = '09:00';
+                                endController.text = '21:00';
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Mall 10-22'),
+                            onPressed: () {
+                              setLocalState(() {
+                                startController.text = '10:00';
+                                endController.text = '22:00';
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('24 Jam'),
+                            onPressed: () {
+                              setLocalState(() {
+                                startController.text = '00:00';
+                                endController.text = '23:59';
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Mulai Sekarang'),
+                            onPressed: () {
+                              setLocalState(() {
+                                startController.text = _currentTimeHm();
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Selesai +1 Jam'),
+                            onPressed: () {
+                              setLocalState(() {
+                                endController.text = _currentTimeHm(
+                                  at: DateTime.now().add(
+                                    const Duration(hours: 1),
+                                  ),
+                                );
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Sekarang -> +1 Jam'),
+                            onPressed: () {
+                              setLocalState(() {
+                                final now = DateTime.now();
+                                startController.text = _currentTimeHm(at: now);
+                                endController.text = _currentTimeHm(
+                                  at: now.add(const Duration(hours: 1)),
+                                );
+                              });
+                            },
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: startController,
+                        keyboardType: TextInputType.datetime,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[0-9:]')),
+                          LengthLimitingTextInputFormatter(5),
+                        ],
+                        decoration: InputDecoration(
+                          labelText: 'Jam mulai (HH:MM)',
+                          suffixIcon: IconButton(
+                            tooltip: 'Pilih jam mulai',
+                            icon: const Icon(Icons.schedule),
+                            onPressed: () async {
+                              final picked = await showTimePicker(
+                                context: ctx,
+                                initialTime:
+                                    _timeOfDayFromHm(startController.text) ??
+                                    TimeOfDay.now(),
+                                helpText: 'Pilih jam mulai',
+                              );
+                              if (picked == null) return;
+                              setLocalState(() {
+                                startController.text = _timeOfDayToHm(picked);
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: endController,
+                        keyboardType: TextInputType.datetime,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[0-9:]')),
+                          LengthLimitingTextInputFormatter(5),
+                        ],
+                        decoration: InputDecoration(
+                          labelText: 'Jam selesai (HH:MM)',
+                          suffixIcon: IconButton(
+                            tooltip: 'Pilih jam selesai',
+                            icon: const Icon(Icons.schedule),
+                            onPressed: () async {
+                              final picked = await showTimePicker(
+                                context: ctx,
+                                initialTime:
+                                    _timeOfDayFromHm(endController.text) ??
+                                    TimeOfDay.now(),
+                                helpText: 'Pilih jam selesai',
+                              );
+                              if (picked == null) return;
+                              setLocalState(() {
+                                endController.text = _timeOfDayToHm(picked);
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Contoh valid: 08:00 atau 21:30',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.blueGrey.shade600,
+                        ),
                       ),
                     ],
                   ),
@@ -1636,16 +2191,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     );
     if (confirmed != true) return;
 
-    _flashSaleScheduleStartController.text = startController.text;
-    _flashSaleScheduleEndController.text = endController.text;
+    final startHm = _formatHm(startController.text);
+    final endHm = _formatHm(endController.text);
+    _flashSaleScheduleStartController.text = startHm;
+    _flashSaleScheduleEndController.text = endHm;
     _flashSaleScheduleDays
       ..clear()
       ..addAll(selectedDays);
 
-    final startTime = _formatHms(_flashSaleScheduleStartController.text);
-    final endTime = _formatHms(_flashSaleScheduleEndController.text);
+    final startTime = _hmToHms(_flashSaleScheduleStartController.text);
+    final endTime = _hmToHms(_flashSaleScheduleEndController.text);
     if (startTime.isEmpty || endTime.isEmpty) {
-      _showMessage('Format waktu harus HH:MM atau HH:MM:SS');
+      _showMessage('Format waktu harus HH:MM');
       return;
     }
     if (_flashSaleScheduleDays.isEmpty) {
@@ -1848,9 +2405,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         order += 1;
       }
       _showMessage('Playlist dibuat');
-      setState(() => _selectedPlaylistId = playlist.id);
+      setState(() {
+        _selectedPlaylistId = playlist.id;
+        _managePlaylistId = playlist.id;
+      });
       await _loadPlaylists();
       await _loadPlaylistLibrary();
+      await _loadManagePlaylistData();
+      _tabController.animateTo(2);
     } catch (e) {
       _showMessage(e.toString());
     }
@@ -1989,21 +2551,41 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   List<_PlaylistTemplate> _playlistsForDevice(String deviceId) {
-    // Source tetap dari playlist library (hasil Kelola Playlist),
-    // tapi untuk Kelola Penayangan tampilkan unik per nama agar tidak bertumpuk.
+    // Source dari playlist library (hasil Kelola Playlist).
+    // Jangan dedup berdasarkan nama agar mapping playlist-id tetap akurat.
     final ordered = <_PlaylistTemplate>[
       ..._playlistLibrary.where((p) => p.deviceId == deviceId),
       ..._playlistLibrary.where((p) => p.deviceId != deviceId),
     ];
-    final seenByName = <String>{};
+    final seenById = <String>{};
     final unique = <_PlaylistTemplate>[];
     for (final item in ordered) {
-      final key = _normalizedText(item.name);
-      if (key.isEmpty || seenByName.contains(key)) continue;
-      seenByName.add(key);
+      final key = item.playlistId.trim();
+      if (key.isEmpty || seenById.contains(key)) continue;
+      seenById.add(key);
       unique.add(item);
     }
     return unique;
+  }
+
+  String _playlistOptionLabelForDevice(
+    _PlaylistTemplate playlist,
+    String targetDeviceId,
+    String? nowPlayingId,
+  ) {
+    final fromCurrentDevice = playlist.deviceId == targetDeviceId;
+    final baseName = playlist.name.trim().isEmpty
+        ? playlist.playlistId
+        : playlist.name.trim();
+    final sourceLabel = fromCurrentDevice
+        ? 'Device ini'
+        : (playlist.deviceName.trim().isEmpty
+              ? playlist.deviceId
+              : playlist.deviceName.trim());
+    final isNowPlaying =
+        nowPlayingId != null && playlist.playlistId == nowPlayingId;
+    final nowTag = isNowPlaying ? ' [Now Playing]' : '';
+    return '$baseName - $sourceLabel$nowTag';
   }
 
   List<String> _bulkPlaylistNameOptions() {
@@ -2746,6 +3328,35 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     _showMessage('$deleted device berhasil dihapus');
   }
 
+  Future<void> _checkSelectedDeviceMediaDownloadStatus() async {
+    if (_deviceMediaCheckBusy) return;
+    if (_selectedDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device dulu');
+      return;
+    }
+    setState(() {
+      _deviceMediaCheckBusy = true;
+      _deviceMediaStatusByDevice.clear();
+    });
+    try {
+      for (final deviceId in _selectedDeviceIds) {
+        try {
+          final status = await _api.fetchDeviceMediaCacheStatus(deviceId);
+          _deviceMediaStatusByDevice[deviceId] = status;
+        } catch (e) {
+          _deviceMediaStatusByDevice[deviceId] = {
+            'error': e.toString(),
+          };
+        }
+      }
+      _deviceMediaCheckedAt = DateTime.now();
+    } finally {
+      if (mounted) {
+        setState(() => _deviceMediaCheckBusy = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final compactTop = MediaQuery.sizeOf(context).width < 1060;
@@ -2896,6 +3507,17 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
+                      FilterChip(
+                        selected: _showSnackbarNotifications,
+                        onSelected: (value) {
+                          setState(() => _showSnackbarNotifications = value);
+                        },
+                        label: Text(
+                          _showSnackbarNotifications
+                              ? 'Popup Notif: ON'
+                              : 'Popup Notif: OFF',
+                        ),
+                      ),
                       if (_lastRefreshAt != null)
                         Text('Last: ${_lastRefreshAt!.toLocal()}'),
                       if (_refreshing)
@@ -3608,10 +4230,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   Widget _flashSaleTab() {
-    final landscapeDevices = _flashSaleLandscapeDevices();
-    final landscapeDeviceIds = landscapeDevices.map((d) => d.id).toSet();
+    final selectableDevices = _flashSaleLandscapeDevices();
+    final selectableDeviceIds = selectableDevices.map((d) => d.id).toSet();
     _flashSaleDeviceIds.removeWhere(
-      (deviceId) => !landscapeDeviceIds.contains(deviceId),
+      (deviceId) => !selectableDeviceIds.contains(deviceId),
     );
 
     return Padding(
@@ -3708,6 +4330,52 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               }),
             ],
           ),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFCBD5E1)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Kalender Jadwal (draft saat ini)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final entry in const {
+                      0: 'Sen',
+                      1: 'Sel',
+                      2: 'Rab',
+                      3: 'Kam',
+                      4: 'Jum',
+                      5: 'Sab',
+                      6: 'Min',
+                    }.entries)
+                      Chip(
+                        backgroundColor:
+                            _flashSaleScheduleDays.contains(entry.key)
+                            ? const Color(0xFFDBEAFE)
+                            : const Color(0xFFF1F5F9),
+                        label: Text(entry.value),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Jam: ${_formatHm(_flashSaleScheduleStartController.text).isEmpty ? '-' : _formatHm(_flashSaleScheduleStartController.text)} - ${_formatHm(_flashSaleScheduleEndController.text).isEmpty ? '-' : _formatHm(_flashSaleScheduleEndController.text)}',
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -3715,7 +4383,29 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 'Produk Flash Sale',
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: const Color(0xFF93C5FD)),
+                ),
+                child: Text(
+                  'Valid: ${_flashSaleValidProductsCount()}/${_flashSaleProducts.length}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
               const Spacer(),
+              OutlinedButton.icon(
+                onPressed: _openFlashSalePreviewDialog,
+                icon: const Icon(Icons.play_circle_outline),
+                label: const Text('Preview 10 detik'),
+              ),
+              const SizedBox(width: 8),
               OutlinedButton.icon(
                 onPressed: () {
                   setState(() {
@@ -3741,6 +4431,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           ..._flashSaleProducts.asMap().entries.map((entry) {
             final index = entry.key;
             final item = entry.value;
+            final validation = _flashSaleProductValidation(item);
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(10),
@@ -3752,12 +4443,38 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      item.name.trim().isEmpty
-                          ? 'Produk ${index + 1} (belum diisi)'
-                          : '${item.name} | ${item.brand} | Normal ${item.normalPrice} -> Promo ${item.promoPrice} | Stok ${item.stock} | Media ${_flashSaleMediaLabelById(item.mediaId)}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.name.trim().isEmpty
+                              ? 'Produk ${index + 1} (belum diisi)'
+                              : '${item.name} | ${item.brand} | Normal ${item.normalPrice} -> Promo ${item.promoPrice} | Stok ${item.stock} | Media ${_flashSaleMediaLabelById(item.mediaId)}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: validation.color.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: validation.color.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Text(
+                            validation.message,
+                            style: TextStyle(
+                              color: validation.color,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -3791,7 +4508,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             style: TextStyle(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
-          if (landscapeDevices.isEmpty)
+          if (selectableDevices.isEmpty)
             const Text(
               'Belum ada device landscape. Ubah orientation device ke landscape di menu Devices.',
               style: TextStyle(
@@ -3803,7 +4520,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: landscapeDevices.map((device) {
+              children: selectableDevices.map((device) {
                 final selected = _flashSaleDeviceIds.contains(device.id);
                 return FilterChip(
                   label: Text(device.name),
@@ -3821,6 +4538,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 );
               }).toList(),
             ),
+          const SizedBox(height: 6),
+          const Text(
+            'Catatan: Flash Sale hanya dikirim ke device orientasi landscape.',
+            style: TextStyle(
+              color: Color(0xFF92400E),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -3843,7 +4568,82 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     'Dicek ${_flashSaleMediaCheckedAt!.hour.toString().padLeft(2, '0')}:${_flashSaleMediaCheckedAt!.minute.toString().padLeft(2, '0')}',
                   ),
                 ),
+              OutlinedButton.icon(
+                onPressed: _flashSaleScheduleCheckBusy
+                    ? null
+                    : _loadFlashSaleRuntimeStatus,
+                icon: const Icon(Icons.calendar_view_week_outlined),
+                label: Text(
+                  _flashSaleScheduleCheckBusy
+                      ? 'Muat Jadwal...'
+                      : 'Muat Jadwal/Runtime Device',
+                ),
+              ),
+              if (_flashSaleScheduleCheckedAt != null)
+                Chip(
+                  label: Text(
+                    'Jadwal dicek ${_flashSaleScheduleCheckedAt!.hour.toString().padLeft(2, '0')}:${_flashSaleScheduleCheckedAt!.minute.toString().padLeft(2, '0')}',
+                  ),
+                ),
             ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFCBD5E1)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Ringkasan Readiness & Performa Campaign',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    Chip(
+                      label: Text(
+                        'Target: ${_flashSaleTargetDeviceIds().length}',
+                      ),
+                    ),
+                    Chip(
+                      label: Text('Online: ${_flashSaleOnlineTargetCount()}'),
+                    ),
+                    Chip(
+                      label: Text(
+                        'Media Ready: ${_flashSaleMediaReadyTargetCount()}',
+                      ),
+                    ),
+                    Chip(
+                      label: Text(
+                        'Campaign Active: ${_flashSaleActiveRuntimeCount()}',
+                      ),
+                    ),
+                    Chip(
+                      label: Text(
+                        'Produk Valid: ${_flashSaleValidProductsCount()}',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _flashSaleTargetDeviceIds().isEmpty
+                      ? 'Belum ada target device dipilih.'
+                      : 'Coverage media-ready: ${((_flashSaleMediaReadyTargetCount() / _flashSaleTargetDeviceIds().length) * 100).toStringAsFixed(0)}% dari target.',
+                  style: const TextStyle(
+                    color: Color(0xFF334155),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
           ),
           if (_flashSaleMissingMediaByDevice.isNotEmpty ||
               _flashSaleMediaErrorByDevice.isNotEmpty)
@@ -3900,6 +4700,96 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     ),
                   );
                 }).toList(),
+              ),
+            ),
+          if (_flashSaleRuntimeByDevice.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Kalender/Jadwal Flash Sale per Device',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: const [
+                      Chip(label: Text('Sen')),
+                      Chip(label: Text('Sel')),
+                      Chip(label: Text('Rab')),
+                      Chip(label: Text('Kam')),
+                      Chip(label: Text('Jum')),
+                      Chip(label: Text('Sab')),
+                      Chip(label: Text('Min')),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ..._flashSaleRuntimeByDevice.entries.map((entry) {
+                    final deviceId = entry.key;
+                    final flash = entry.value;
+                    final matched = _devices.where((d) => d.id == deviceId);
+                    final name = matched.isEmpty
+                        ? deviceId
+                        : matched.first.name;
+                    final error = (flash['error'] ?? '').toString().trim();
+                    if (error.isNotEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          '$name: gagal baca jadwal (${error.split('\n').first})',
+                          style: const TextStyle(
+                            color: Color(0xFFB91C1C),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      );
+                    }
+                    final days = _formatScheduleDaysLabel(
+                      flash['schedule_days']?.toString(),
+                    );
+                    final start = (flash['schedule_start_time'] ?? '-')
+                        .toString();
+                    final end = (flash['schedule_end_time'] ?? '-').toString();
+                    final active = flash['active'] == true
+                        ? 'AKTIF'
+                        : 'NONAKTIF';
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '$name: [$active] hari=$days | jam=$start - $end',
+                              style: TextStyle(
+                                color: flash['active'] == true
+                                    ? const Color(0xFF166534)
+                                    : const Color(0xFF334155),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: () => _editFlashSaleScheduleForDevice(
+                              deviceId,
+                              flash,
+                            ),
+                            child: const Text('Edit Jadwal'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
               ),
             ),
           const SizedBox(height: 12),
@@ -4101,6 +4991,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               }
               final devicePlaylists = _playlistsForDevice(deviceId);
               final selected = _devicePlaylistSelection[deviceId];
+              final nowPlayingId = _deviceNowPlayingPlaylistId[deviceId];
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 padding: const EdgeInsets.symmetric(
@@ -4136,7 +5027,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                               (p) => DropdownMenuItem(
                                 value: p.playlistId,
                                 child: Text(
-                                  p.name,
+                                  _playlistOptionLabelForDevice(
+                                    p,
+                                    deviceId,
+                                    nowPlayingId,
+                                  ),
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
@@ -4547,8 +5442,121 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     : _deleteSelectedDevices,
                 child: const Text('Hapus Device Terpilih'),
               ),
+              ElevatedButton.icon(
+                onPressed: _selectedDeviceIds.isEmpty || _deviceMediaCheckBusy
+                    ? null
+                    : _checkSelectedDeviceMediaDownloadStatus,
+                icon: const Icon(Icons.cloud_done_outlined),
+                label: Text(
+                  _deviceMediaCheckBusy
+                      ? 'Cek Download...'
+                      : 'Cek Download Media',
+                ),
+              ),
+              if (_deviceMediaCheckedAt != null)
+                Text(
+                  'Dicek ${_deviceMediaCheckedAt!.hour.toString().padLeft(2, '0')}:${_deviceMediaCheckedAt!.minute.toString().padLeft(2, '0')}',
+                ),
             ],
           ),
+          if (_deviceMediaStatusByDevice.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF93C5FD)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Status Download Media Device',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._deviceMediaStatusByDevice.entries.map((entry) {
+                    final deviceId = entry.key;
+                    final status = entry.value;
+                    String deviceName = deviceId;
+                    for (final d in _devices) {
+                      if (d.id == deviceId) {
+                        deviceName = d.name;
+                        break;
+                      }
+                    }
+                    final error = (status['error'] ?? '').toString().trim();
+                    if (error.isNotEmpty) {
+                      return Text(
+                        '$deviceName: gagal cek (${error.split('\n').first})',
+                        style: const TextStyle(color: Color(0xFFB91C1C)),
+                      );
+                    }
+                    final ready = status['ready'] == true;
+                    final requiredCount =
+                        (status['required_count'] as num?)?.toInt() ?? 0;
+                    final cachedCount =
+                        (status['cached_count'] as num?)?.toInt() ?? 0;
+                    final missingCount =
+                        (status['missing_count'] as num?)?.toInt() ?? 0;
+                    final missing =
+                        (status['missing_media_ids'] as List<dynamic>? ?? const [])
+                            .map((e) => e.toString())
+                            .toList();
+                    final badge = ready ? 'SIAP' : 'BELUM LENGKAP';
+                    final color = ready
+                        ? const Color(0xFF15803D)
+                        : const Color(0xFFB45309);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '$deviceName: cache $cachedCount/$requiredCount',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: color.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  badge,
+                                  style: TextStyle(
+                                    color: color,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            ready
+                                ? 'Semua media sudah terdownload.'
+                                : 'Masih kurang $missingCount media: ${missing.take(8).join(', ')}${missing.length > 8 ? ' ...' : ''}',
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           if (_devices.isEmpty) const Text('Belum ada device terdaftar.'),
           Expanded(

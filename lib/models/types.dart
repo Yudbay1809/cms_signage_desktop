@@ -5,6 +5,14 @@ class DeviceInfo {
   final String status;
   final DateTime? lastSeen;
   final String? orientation;
+  final bool mediaDownloadReady;
+  final String mediaDownloadStatus;
+  final String mediaDownloadStatusLabel;
+  final String mediaDownloadStatusColor;
+  final int mediaRequiredCount;
+  final int mediaCachedCount;
+  final int mediaMissingCount;
+  final DateTime? mediaCacheUpdatedAt;
 
   DeviceInfo({
     required this.id,
@@ -13,6 +21,14 @@ class DeviceInfo {
     required this.status,
     this.lastSeen,
     this.orientation,
+    this.mediaDownloadReady = false,
+    this.mediaDownloadStatus = 'not_reported',
+    this.mediaDownloadStatusLabel = 'Belum Lapor',
+    this.mediaDownloadStatusColor = '#6B7280',
+    this.mediaRequiredCount = 0,
+    this.mediaCachedCount = 0,
+    this.mediaMissingCount = 0,
+    this.mediaCacheUpdatedAt,
   });
 
   factory DeviceInfo.fromJson(Map<String, dynamic> json) {
@@ -25,6 +41,19 @@ class DeviceInfo {
           ? DateTime.tryParse(json['last_seen'])
           : null,
       orientation: json['orientation'],
+      mediaDownloadReady: json['media_download_ready'] == true,
+      mediaDownloadStatus: (json['media_download_status'] ?? 'not_reported')
+          .toString(),
+      mediaDownloadStatusLabel:
+          (json['media_download_status_label'] ?? 'Belum Lapor').toString(),
+      mediaDownloadStatusColor:
+          (json['media_download_status_color'] ?? '#6B7280').toString(),
+      mediaRequiredCount: (json['media_required_count'] as num?)?.toInt() ?? 0,
+      mediaCachedCount: (json['media_cached_count'] as num?)?.toInt() ?? 0,
+      mediaMissingCount: (json['media_missing_count'] as num?)?.toInt() ?? 0,
+      mediaCacheUpdatedAt: json['media_cache_updated_at'] != null
+          ? DateTime.tryParse(json['media_cache_updated_at'])
+          : null,
     );
   }
 }

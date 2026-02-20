@@ -189,6 +189,20 @@ class ApiService {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  Future<void> requestDeviceMediaDownload(String deviceId) async {
+    final res = await _sendWithRetry(
+      () => http.post(
+        _uri('/devices/$deviceId/request-media-download'),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception(
+        'Failed to request device media download: ${_formatHttpError(res)}',
+      );
+    }
+  }
+
   Future<List<ScreenInfo>> listScreensForDevice(String deviceId) async {
     final data = await fetchDeviceConfigRaw(deviceId);
     final rawScreens = data['screens'];

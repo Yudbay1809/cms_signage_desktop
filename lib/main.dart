@@ -85,6 +85,12 @@ class CmsApp extends StatelessWidget {
           labelStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),
       ),
+      builder: (context, child) {
+        return TooltipVisibility(
+          visible: false,
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const CmsHome(),
     );
   }
@@ -234,6 +240,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   bool _deviceMediaCheckBusy = false;
   DateTime? _deviceMediaCheckedAt;
   final Map<String, Map<String, dynamic>> _deviceMediaStatusByDevice = {};
+  final Set<String> _deviceMediaDownloadRequestBusyIds = {};
 
   @override
   void initState() {
@@ -528,15 +535,13 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           (key, _) => !availableMediaIds.contains(key),
         );
       });
-      await _loadScreens(silent: silent);
+      // Prevent snackbar flicker on refresh; keep errors in inline header.
+      await _loadScreens(silent: true);
       if (_gridTargetDeviceId != null && _gridTargetPreviewItems.isEmpty) {
-        await _loadGridPreviewForDevice(_gridTargetDeviceId!);
+        await _loadGridPreviewForDevice(_gridTargetDeviceId!, silent: true);
       }
     } catch (e) {
       setState(() => _lastError = e.toString());
-      if (!silent) {
-        _showMessage(e.toString());
-      }
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -1115,32 +1120,23 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     if (!mounted) return;
     final message = msg.trim();
     if (message.isEmpty) return;
-    if (!force && !_showSnackbarNotifications) return;
-    if (!force && DateTime.now().isBefore(_suppressMessageUntil)) return;
+    // Popup snackbar dimatikan total karena mengganggu operator saat refresh.
+    // Pesan error tetap terlihat pada label inline "Error: ..." di header.
+    if (_looksLikeErrorMessage(message)) {
+      setState(() => _lastError = message);
+    }
+  }
 
-    final now = DateTime.now();
-    final lastAt = _lastSnackAt;
-    final sameAsLast = message == _lastSnackMessage;
-    final isDuplicateBurst =
-        sameAsLast &&
-        lastAt != null &&
-        now.difference(lastAt) < const Duration(seconds: 15);
-    final isFlood =
-        !sameAsLast &&
-        lastAt != null &&
-        now.difference(lastAt) < const Duration(seconds: 3);
-
-    if (!force && (isDuplicateBurst || isFlood)) return;
-
-    _lastSnackMessage = message;
-    _lastSnackAt = now;
-
-    final messenger = ScaffoldMessenger.of(context);
-    messenger
-      ..hideCurrentSnackBar(reason: SnackBarClosedReason.hide)
-      ..showSnackBar(
-        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
-      );
+  bool _looksLikeErrorMessage(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('error') ||
+        lower.contains('gagal') ||
+        lower.contains('failed') ||
+        lower.contains('timeout') ||
+        lower.contains('unauthorized') ||
+        lower.contains('forbidden') ||
+        lower.contains('not found') ||
+        lower.contains('exception');
   }
 
   Future<void> _pickFile() async {
@@ -2971,7 +2967,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     ];
   }
 
-  Future<void> _loadGridPreviewForDevice(String deviceId) async {
+  Future<void> _loadGridPreviewForDevice(
+    String deviceId, {
+    bool silent = false,
+  }) async {
     setState(() => _gridTargetLoading = true);
     try {
       final config = await _api.fetchDeviceConfigRaw(deviceId);
@@ -3055,7 +3054,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         _gridTargetPreviewItems = previewItems;
       });
     } catch (e) {
-      _showMessage(e.toString());
+      if (!silent) {
+        _showMessage(e.toString());
+      }
     } finally {
       if (mounted) setState(() => _gridTargetLoading = false);
     }
@@ -3357,6 +3358,26 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
+  Future<void> _requestDeviceMediaDownload(DeviceInfo device) async {
+    if (_deviceMediaDownloadRequestBusyIds.contains(device.id)) return;
+    setState(() {
+      _deviceMediaDownloadRequestBusyIds.add(device.id);
+    });
+    try {
+      await _api.requestDeviceMediaDownload(device.id);
+      _showMessage('Permintaan download media dikirim ke ${device.name}');
+      await _refresh(silent: true);
+    } catch (e) {
+      _showMessage(e.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deviceMediaDownloadRequestBusyIds.remove(device.id);
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final compactTop = MediaQuery.sizeOf(context).width < 1060;
@@ -3509,14 +3530,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     children: [
                       FilterChip(
                         selected: _showSnackbarNotifications,
-                        onSelected: (value) {
-                          setState(() => _showSnackbarNotifications = value);
-                        },
-                        label: Text(
-                          _showSnackbarNotifications
-                              ? 'Popup Notif: ON'
-                              : 'Popup Notif: OFF',
-                        ),
+                        onSelected: (_) {},
+                        label: const Text('Popup Notif: Disabled'),
                       ),
                       if (_lastRefreshAt != null)
                         Text('Last: ${_lastRefreshAt!.toLocal()}'),
@@ -5422,6 +5437,14 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     );
   }
 
+  Color _parseHexColor(String? raw, {required Color fallback}) {
+    final hex = (raw ?? '').trim().replaceFirst('#', '');
+    if (hex.length != 6) return fallback;
+    final parsed = int.tryParse('FF$hex', radix: 16);
+    if (parsed == null) return fallback;
+    return Color(parsed);
+  }
+
   Widget _devicesTab() {
     return Padding(
       padding: const EdgeInsets.all(12),
@@ -5577,6 +5600,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 final orientationIcon = orientation == 'landscape'
                     ? Icons.stay_current_landscape
                     : Icons.stay_current_portrait;
+                final downloadStatusColor = _parseHexColor(
+                  d.mediaDownloadStatusColor,
+                  fallback: d.mediaDownloadReady
+                      ? const Color(0xFF15803D)
+                      : const Color(0xFF6B7280),
+                );
+                final downloadStatusLabel = d.mediaDownloadStatusLabel.trim().isEmpty
+                    ? 'Belum Lapor'
+                    : d.mediaDownloadStatusLabel;
+                final requestBusy = _deviceMediaDownloadRequestBusyIds.contains(d.id);
+                final canRequestDownload =
+                    !requestBusy && !d.mediaDownloadReady && isOnline;
                 return CheckboxListTile(
                   value: selected,
                   title: Row(
@@ -5603,6 +5638,45 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         ),
                       ),
                       const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: downloadStatusColor.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          downloadStatusLabel,
+                          style: TextStyle(
+                            color: downloadStatusColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        tooltip: d.mediaDownloadReady
+                            ? 'Media sudah lengkap'
+                            : (!isOnline
+                                  ? 'Device offline, tidak bisa request download'
+                                  : 'Minta device download media'),
+                        onPressed: canRequestDownload
+                            ? () => _requestDeviceMediaDownload(d)
+                            : null,
+                        icon: requestBusy
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.download_for_offline_outlined),
+                      ),
+                      const SizedBox(width: 2),
                       IconButton(
                         tooltip: 'Delete device',
                         icon: const Icon(Icons.delete_outline),
@@ -5611,7 +5685,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     ],
                   ),
                   subtitle: Text(
-                    '${d.id} | $orientation | last: ${lastSeen ?? '-'}',
+                    '${d.id} | $orientation | cache: ${d.mediaCachedCount}/${d.mediaRequiredCount} | missing: ${d.mediaMissingCount} | last: ${lastSeen ?? '-'}',
                   ),
                   secondary: PopupMenuButton<String>(
                     tooltip: 'Set orientation',

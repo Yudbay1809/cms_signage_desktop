@@ -104,6 +104,10 @@ class CmsHome extends StatefulWidget {
 }
 
 class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
+  static const bool _enableRealtimeAutoRefresh = false;
+  static const int _flashSaleDownloadPollSeconds = 3;
+  static const int _flashSaleReadyBufferSeconds = 8;
+  static const int _deviceDownloadRequestBufferSeconds = 2;
   late TabController _tabController;
   final TextEditingController _baseUrlController = TextEditingController();
   final TextEditingController _apiKeyController = TextEditingController();
@@ -140,6 +144,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   bool _realtimeConnecting = false;
   int _lastRealtimeRevision = 0;
   bool _refreshing = false;
+  DateTime? _lastAutoRefreshAt;
   DateTime? _lastRefreshAt;
   String? _lastError;
 
@@ -199,6 +204,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   final Set<String> _flashSaleDeviceIds = {};
   final Set<int> _flashSaleScheduleDays = {1, 2, 3, 4, 5, 6, 0};
   bool _flashSaleBusy = false;
+  bool _flashSaleDownloadBusy = false;
+  String _flashSaleDownloadProgress = '';
   bool _flashSaleMediaCheckBusy = false;
   DateTime? _flashSaleMediaCheckedAt;
   final Map<String, List<String>> _flashSaleMissingMediaByDevice = {};
@@ -240,6 +247,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   bool _deviceMediaCheckBusy = false;
   DateTime? _deviceMediaCheckedAt;
   final Map<String, Map<String, dynamic>> _deviceMediaStatusByDevice = {};
+  bool _deviceSyncCheckBusy = false;
+  DateTime? _deviceSyncCheckedAt;
+  final Map<String, Map<String, dynamic>> _deviceSyncStatusByDevice = {};
   final Set<String> _deviceMediaDownloadRequestBusyIds = {};
 
   @override
@@ -296,13 +306,25 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   void _queueRealtimeRefresh() {
+    if (!_enableRealtimeAutoRefresh) return;
+    if (_refreshing) return;
+    final now = DateTime.now();
+    final last = _lastAutoRefreshAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 6)) {
+      return;
+    }
     if (_realtimeRefreshDebounce?.isActive == true) return;
-    _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 500), () {
-      _refresh(silent: true);
+    _realtimeRefreshDebounce = Timer(const Duration(seconds: 2), () {
+      _lastAutoRefreshAt = DateTime.now();
+      _refresh(silent: true, deep: false);
     });
   }
 
   Future<void> _connectRealtime() async {
+    if (!_enableRealtimeAutoRefresh) {
+      _closeRealtimeSocket();
+      return;
+    }
     if (!mounted || _realtimeConnecting) return;
     final base = _normalizeBaseUrl(_baseUrlController.text);
     if (base.isEmpty) return;
@@ -465,10 +487,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _baseUrlController.text = found;
     }
     await _refresh(silent: true);
-    _connectRealtime();
+    if (_enableRealtimeAutoRefresh) {
+      _connectRealtime();
+    }
   }
 
-  Future<void> _refresh({bool silent = false}) async {
+  Future<void> _refresh({bool silent = false, bool deep = true}) async {
     if (_refreshing) return;
     final baseUrl = _normalizeBaseUrl(_baseUrlController.text);
     if (baseUrl != _baseUrlController.text.trim()) {
@@ -480,7 +504,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           canonical.isNotEmpty &&
           canonical != _baseUrlController.text.trim()) {
         _baseUrlController.text = canonical;
-        _connectRealtime();
+        if (_enableRealtimeAutoRefresh) {
+          _connectRealtime();
+        }
       }
     }
     if (baseUrl.isEmpty) {
@@ -489,7 +515,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       }
       return;
     }
-    _connectRealtime();
+    if (_enableRealtimeAutoRefresh) {
+      _connectRealtime();
+    }
 
     setState(() {
       _refreshing = true;
@@ -535,10 +563,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           (key, _) => !availableMediaIds.contains(key),
         );
       });
-      // Prevent snackbar flicker on refresh; keep errors in inline header.
-      await _loadScreens(silent: true);
-      if (_gridTargetDeviceId != null && _gridTargetPreviewItems.isEmpty) {
-        await _loadGridPreviewForDevice(_gridTargetDeviceId!, silent: true);
+      if (deep) {
+        // Prevent snackbar flicker on refresh; keep errors in inline header.
+        await _loadScreens(silent: true);
+        if (_gridTargetDeviceId != null && _gridTargetPreviewItems.isEmpty) {
+          await _loadGridPreviewForDevice(_gridTargetDeviceId!, silent: true);
+        }
       }
     } catch (e) {
       setState(() => _lastError = e.toString());
@@ -1346,6 +1376,21 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     return false;
   }
 
+  int _flashSaleMissingTargetCountForMedia(String mediaId) {
+    if (_flashSaleMediaCheckedAt == null) return 0;
+    final normalized = _normalizeMediaId(mediaId);
+    if (normalized.isEmpty) return 0;
+    final mediaLabel = _flashSaleMediaLabelById(mediaId);
+    var count = 0;
+    for (final deviceId in _flashSaleTargetDeviceIds()) {
+      final missing = _flashSaleMissingMediaByDevice[deviceId] ?? const [];
+      if (missing.any((item) => item.trim() == mediaLabel.trim())) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   ({String message, Color color}) _flashSaleProductValidation(
     _FlashSaleProductDraft item,
   ) {
@@ -1362,6 +1407,13 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
     if (!_flashSaleMediaExists(mediaId)) {
       return (message: 'Media tidak ditemukan', color: const Color(0xFFB91C1C));
+    }
+    final missingTargets = _flashSaleMissingTargetCountForMedia(mediaId);
+    if (missingTargets > 0) {
+      return (
+        message: 'Media dipilih, belum terdownload di $missingTargets device',
+        color: const Color(0xFF92400E),
+      );
     }
     return (message: 'Produk siap tayang', color: const Color(0xFF166534));
   }
@@ -1720,6 +1772,101 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
+  bool _flashSaleMediaReadyForTargets() {
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) return false;
+    for (final deviceId in targetDeviceIds) {
+      if (_flashSaleMediaErrorByDevice[deviceId] != null) return false;
+      final missing = _flashSaleMissingMediaByDevice[deviceId] ?? const [];
+      if (missing.isNotEmpty) return false;
+    }
+    return true;
+  }
+
+  Future<bool> _downloadFlashSaleMediaUntilReady() async {
+    if (_flashSaleDownloadBusy) return false;
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device target untuk download media');
+      return false;
+    }
+    final requiredMediaIds = _flashSaleProductMediaIds();
+    if (requiredMediaIds.isEmpty) {
+      _showMessage('Pilih media pada produk Flash Sale dulu');
+      return false;
+    }
+
+    setState(() {
+      _flashSaleDownloadBusy = true;
+      _flashSaleDownloadProgress = 'Mulai cek sinkron media...';
+    });
+    try {
+      const maxAttempts = 12;
+      for (var attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        if (mounted) {
+          setState(() {
+            _flashSaleDownloadProgress =
+                'Cek sinkron media ($attempt/$maxAttempts)...';
+          });
+        }
+        await _checkFlashSaleMediaSyncStatus();
+        if (_flashSaleMediaReadyForTargets()) {
+          if (mounted) {
+            setState(() {
+              _flashSaleDownloadProgress =
+                  'Media terdeteksi siap. Buffer $_flashSaleReadyBufferSeconds detik...';
+            });
+          }
+          await Future.delayed(
+            const Duration(seconds: _flashSaleReadyBufferSeconds),
+          );
+          await _checkFlashSaleMediaSyncStatus();
+          if (_flashSaleMediaReadyForTargets()) {
+            _showMessage(
+              'Media Flash Sale sudah siap di semua device target (buffer selesai)',
+            );
+            return true;
+          }
+        }
+
+        final toRequest = <String>[];
+        for (final deviceId in targetDeviceIds) {
+          final missing = _flashSaleMissingMediaByDevice[deviceId] ?? const [];
+          if (missing.isNotEmpty) toRequest.add(deviceId);
+        }
+        for (final deviceId in toRequest) {
+          try {
+            await _api.requestDeviceMediaDownload(deviceId);
+          } catch (e) {
+            _flashSaleMediaErrorByDevice[deviceId] = e.toString();
+          }
+        }
+        if (attempt < maxAttempts) {
+          if (mounted) {
+            setState(() {
+              _flashSaleDownloadProgress =
+                  'Menunggu proses download device ($_flashSaleDownloadPollSeconds detik)...';
+            });
+          }
+          await Future.delayed(
+            const Duration(seconds: _flashSaleDownloadPollSeconds),
+          );
+        }
+      }
+      _showMessage(
+        'Media belum selesai terdownload. Klik "Cek Sinkron Media Device" untuk lihat device yang masih kurang.',
+      );
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _flashSaleDownloadBusy = false;
+          _flashSaleDownloadProgress = '';
+        });
+      }
+    }
+  }
+
   Future<void> _loadFlashSaleRuntimeStatus() async {
     if (_flashSaleScheduleCheckBusy) return;
     final targetDeviceIds = _flashSaleTargetDeviceIds();
@@ -1861,6 +2008,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Pilih minimal satu device untuk Flash Sale');
       return;
     }
+    final mediaReady = await _downloadFlashSaleMediaUntilReady();
+    if (!mediaReady) return;
 
     setState(() => _flashSaleBusy = true);
     try {
@@ -1904,6 +2053,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Pilih minimal satu device untuk Flash Sale');
       return;
     }
+    final mediaReady = await _downloadFlashSaleMediaUntilReady();
+    if (!mediaReady) return;
 
     final dayLabels = <int, String>{
       0: 'Sen',
@@ -3365,7 +3516,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     });
     try {
       await _api.requestDeviceMediaDownload(device.id);
-      _showMessage('Permintaan download media dikirim ke ${device.name}');
+      _showMessage(
+        'Permintaan download media dikirim ke ${device.name}, menunggu buffer...',
+      );
+      await Future.delayed(
+        const Duration(seconds: _deviceDownloadRequestBufferSeconds),
+      );
       await _refresh(silent: true);
     } catch (e) {
       _showMessage(e.toString());
@@ -3374,6 +3530,35 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         setState(() {
           _deviceMediaDownloadRequestBusyIds.remove(device.id);
         });
+      }
+    }
+  }
+
+  Future<void> _checkSelectedDeviceSyncQueueStatus() async {
+    if (_deviceSyncCheckBusy) return;
+    if (_selectedDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device dulu');
+      return;
+    }
+    setState(() {
+      _deviceSyncCheckBusy = true;
+      _deviceSyncStatusByDevice.clear();
+    });
+    try {
+      for (final deviceId in _selectedDeviceIds) {
+        try {
+          final status = await _api.fetchDeviceSyncStatus(deviceId);
+          _deviceSyncStatusByDevice[deviceId] = status;
+        } catch (e) {
+          _deviceSyncStatusByDevice[deviceId] = {
+            'error': e.toString(),
+          };
+        }
+      }
+      _deviceSyncCheckedAt = DateTime.now();
+    } finally {
+      if (mounted) {
+        setState(() => _deviceSyncCheckBusy = false);
       }
     }
   }
@@ -4577,6 +4762,21 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       : 'Cek Sinkron Media Device',
                 ),
               ),
+              OutlinedButton.icon(
+                onPressed: (_flashSaleDownloadBusy || _flashSaleBusy)
+                    ? null
+                    : _downloadFlashSaleMediaUntilReady,
+                icon: const Icon(Icons.download_for_offline_outlined),
+                label: Text(
+                  _flashSaleDownloadBusy
+                      ? 'Download Media...'
+                      : 'Download Media Dulu',
+                ),
+              ),
+              if (_flashSaleDownloadBusy && _flashSaleDownloadProgress.isNotEmpty)
+                Chip(
+                  label: Text(_flashSaleDownloadProgress),
+                ),
               if (_flashSaleMediaCheckedAt != null)
                 Chip(
                   label: Text(
@@ -5476,9 +5676,22 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       : 'Cek Download Media',
                 ),
               ),
+              ElevatedButton.icon(
+                onPressed: _selectedDeviceIds.isEmpty || _deviceSyncCheckBusy
+                    ? null
+                    : _checkSelectedDeviceSyncQueueStatus,
+                icon: const Icon(Icons.sync),
+                label: Text(
+                  _deviceSyncCheckBusy ? 'Cek Queue...' : 'Cek Sync Queue',
+                ),
+              ),
               if (_deviceMediaCheckedAt != null)
                 Text(
                   'Dicek ${_deviceMediaCheckedAt!.hour.toString().padLeft(2, '0')}:${_deviceMediaCheckedAt!.minute.toString().padLeft(2, '0')}',
+                ),
+              if (_deviceSyncCheckedAt != null)
+                Text(
+                  'Queue ${_deviceSyncCheckedAt!.hour.toString().padLeft(2, '0')}:${_deviceSyncCheckedAt!.minute.toString().padLeft(2, '0')}',
                 ),
             ],
           ),
@@ -5580,6 +5793,58 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               ),
             ),
           ],
+          if (_deviceSyncStatusByDevice.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF86EFAC)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Status Sync Queue Device',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._deviceSyncStatusByDevice.entries.map((entry) {
+                    final deviceId = entry.key;
+                    final status = entry.value;
+                    String deviceName = deviceId;
+                    for (final d in _devices) {
+                      if (d.id == deviceId) {
+                        deviceName = d.name;
+                        break;
+                      }
+                    }
+                    final error = (status['error'] ?? '').toString().trim();
+                    if (error.isNotEmpty) {
+                      return Text(
+                        '$deviceName: gagal cek (${error.split('\n').first})',
+                        style: const TextStyle(color: Color(0xFFB91C1C)),
+                      );
+                    }
+                    final queue = (status['queue_status'] ?? 'idle').toString();
+                    final progress =
+                        (status['progress_percent'] as num?)?.toInt() ?? 0;
+                    final completed =
+                        (status['completed_count'] as num?)?.toInt() ?? 0;
+                    final failed = (status['failed_count'] as num?)?.toInt() ?? 0;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '$deviceName: ${queue.toUpperCase()} | $progress% | completed: $completed | failed: $failed',
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           if (_devices.isEmpty) const Text('Belum ada device terdaftar.'),
           Expanded(
@@ -5612,6 +5877,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 final requestBusy = _deviceMediaDownloadRequestBusyIds.contains(d.id);
                 final canRequestDownload =
                     !requestBusy && !d.mediaDownloadReady && isOnline;
+                final syncStatus = _deviceSyncStatusByDevice[d.id] ?? const {};
+                final queueStatus = (syncStatus['queue_status'] ?? '').toString();
+                final queueProgress =
+                    (syncStatus['progress_percent'] as num?)?.toInt();
                 return CheckboxListTile(
                   value: selected,
                   title: Row(
@@ -5657,6 +5926,28 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         ),
                       ),
                       const SizedBox(width: 6),
+                      if (queueStatus.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0EA5E9).withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            queueProgress == null
+                                ? queueStatus.toUpperCase()
+                                : '${queueStatus.toUpperCase()} $queueProgress%',
+                            style: const TextStyle(
+                              color: Color(0xFF0369A1),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      if (queueStatus.isNotEmpty) const SizedBox(width: 6),
                       IconButton(
                         tooltip: d.mediaDownloadReady
                             ? 'Media sudah lengkap'

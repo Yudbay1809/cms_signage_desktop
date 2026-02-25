@@ -1867,6 +1867,50 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
+  bool _isSyncStatusSafeForFlashSale(Map<String, dynamic> status) {
+    final queue = (status['queue_status'] ?? '').toString().trim().toLowerCase();
+    if (queue == 'ready') return true;
+    if (queue != 'ready_with_warnings') return false;
+    final failedItems = (status['failed_items'] as List<dynamic>? ?? const []);
+    for (final row in failedItems) {
+      if (row is! Map) continue;
+      final priority = (row['priority'] ?? '').toString().trim().toUpperCase();
+      if (priority == 'P0' || priority == 'P1') return false;
+    }
+    return true;
+  }
+
+  Future<bool> _ensureFlashSaleSyncGateReady() async {
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) return false;
+    final blocked = <String>[];
+
+    for (final deviceId in targetDeviceIds) {
+      String label = deviceId;
+      for (final d in _devices) {
+        if (d.id == deviceId) {
+          label = d.name;
+          break;
+        }
+      }
+      try {
+        final status = await _api.fetchDeviceSyncStatus(deviceId);
+        if (!_isSyncStatusSafeForFlashSale(status)) {
+          final queue = (status['queue_status'] ?? 'unknown').toString();
+          blocked.add('$label ($queue)');
+        }
+      } catch (_) {
+        blocked.add('$label (sync-status gagal)');
+      }
+    }
+
+    if (blocked.isEmpty) return true;
+    _showMessage(
+      'Flash Sale belum bisa tayang. Sync media belum siap: ${blocked.join(', ')}',
+    );
+    return false;
+  }
+
   Future<void> _loadFlashSaleRuntimeStatus() async {
     if (_flashSaleScheduleCheckBusy) return;
     final targetDeviceIds = _flashSaleTargetDeviceIds();
@@ -2010,6 +2054,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
     final mediaReady = await _downloadFlashSaleMediaUntilReady();
     if (!mediaReady) return;
+    final syncReady = await _ensureFlashSaleSyncGateReady();
+    if (!syncReady) return;
 
     setState(() => _flashSaleBusy = true);
     try {
@@ -2055,6 +2101,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
     final mediaReady = await _downloadFlashSaleMediaUntilReady();
     if (!mediaReady) return;
+    final syncReady = await _ensureFlashSaleSyncGateReady();
+    if (!syncReady) return;
 
     final dayLabels = <int, String>{
       0: 'Sen',

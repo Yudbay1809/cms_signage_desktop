@@ -1580,6 +1580,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     return jsonEncode(rows);
   }
 
+  double _responsiveDialogWidth(BuildContext context, double preferred) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final maxAllowed = math.max(320.0, screenWidth - 48.0);
+    return math.min(preferred, maxAllowed);
+  }
+
   Future<void> _editFlashSaleProduct(int index) async {
     if (index < 0 || index >= _flashSaleProducts.length) return;
     final current = _flashSaleProducts[index];
@@ -1607,7 +1613,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             return AlertDialog(
               title: Text('Edit Produk ${index + 1}'),
               content: SizedBox(
-                width: 520,
+                width: _responsiveDialogWidth(ctx, 520),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1977,7 +1983,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             return AlertDialog(
               title: Text('Preview Flash Sale (${remaining}s)'),
               content: SizedBox(
-                width: 620,
+                width: _responsiveDialogWidth(ctx, 620),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2129,7 +2135,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             return AlertDialog(
               title: const Text('Jadwalkan Flash Sale'),
               content: SizedBox(
-                width: 520,
+                width: _responsiveDialogWidth(ctx, 520),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -5269,7 +5275,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 child: Row(
                   children: [
                     SizedBox(
-                      width: 190,
+                      width: math.min(
+                        190,
+                        math.max(120, MediaQuery.sizeOf(context).width * 0.22),
+                      ),
                       child: Text(
                         device?.name ?? deviceId,
                         overflow: TextOverflow.ellipsis,

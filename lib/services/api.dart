@@ -527,6 +527,39 @@ class ApiService {
     }
   }
 
+  Future<void> upsertFlashSaleDraft({
+    required String deviceId,
+    required String note,
+    required int countdownSec,
+    required String productsJson,
+    String? scheduleDaysCsv,
+    String? startTime,
+    String? endTime,
+  }) async {
+    final query = <String, String>{
+      'note': note,
+      'countdown_sec': countdownSec.toString(),
+      'products_json': productsJson,
+    };
+    final days = (scheduleDaysCsv ?? '').trim();
+    final start = (startTime ?? '').trim();
+    final end = (endTime ?? '').trim();
+    if (days.isNotEmpty && start.isNotEmpty && end.isNotEmpty) {
+      query['schedule_days'] = days;
+      query['start_time'] = start;
+      query['end_time'] = end;
+    }
+    final res = await _sendWithRetry(
+      () => http.put(
+        _uri('/flash-sale/device/$deviceId/draft', query),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Flash sale draft failed: ${_formatHttpError(res)}');
+    }
+  }
+
   Future<void> disableFlashSale(String deviceId) async {
     final res = await _sendWithRetry(
       () => http.delete(_uri('/flash-sale/device/$deviceId'), headers: _headers()),

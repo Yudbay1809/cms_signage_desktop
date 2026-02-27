@@ -2477,6 +2477,70 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
+  Future<void> _saveFlashSaleDraft() async {
+    if (_flashSaleBusy) return;
+    if (!_validateFlashSaleMetaInput()) return;
+    final targetDeviceIds = _flashSaleTargetDeviceIds();
+    if (targetDeviceIds.isEmpty) {
+      _showMessage('Pilih minimal satu device untuk menyimpan draft Flash Sale');
+      return;
+    }
+
+    final hasAnySchedule =
+        _flashSaleScheduleDays.isNotEmpty ||
+        _flashSaleScheduleStartController.text.trim().isNotEmpty ||
+        _flashSaleScheduleEndController.text.trim().isNotEmpty;
+    final startTime = _hmToHms(_flashSaleScheduleStartController.text);
+    final endTime = _hmToHms(_flashSaleScheduleEndController.text);
+    if (hasAnySchedule) {
+      if (_flashSaleScheduleDays.isEmpty ||
+          startTime.isEmpty ||
+          endTime.isEmpty) {
+        _showMessage(
+          'Jika isi jadwal draft, hari + jam mulai + jam selesai wajib lengkap',
+        );
+        return;
+      }
+    }
+
+    setState(() => _flashSaleBusy = true);
+    try {
+      final note = _flashSaleNoteFromInput();
+      final countdownSec = _flashSaleCountdownFromInput() ?? 0;
+      final productsJson = _flashSaleProductsJson();
+      final daysCsv = _flashSaleScheduleDays.toList()..sort();
+      final failed = <String>[];
+      for (final deviceId in targetDeviceIds) {
+        try {
+          await _api.upsertFlashSaleDraft(
+            deviceId: deviceId,
+            note: note,
+            countdownSec: countdownSec,
+            productsJson: productsJson,
+            scheduleDaysCsv: hasAnySchedule ? daysCsv.join(',') : null,
+            startTime: hasAnySchedule ? startTime : null,
+            endTime: hasAnySchedule ? endTime : null,
+          );
+        } catch (_) {
+          failed.add(deviceId);
+        }
+      }
+      if (failed.isEmpty) {
+        _showMessage('Draft Flash Sale berhasil disimpan');
+      } else {
+        _showMessage(
+          'Sebagian gagal simpan draft. Device gagal: ${failed.join(', ')}',
+        );
+      }
+      await _loadFlashSaleRuntimeStatus();
+      await _refreshNowPlayingForSelectedDevices();
+    } catch (e) {
+      _showMessage(e.toString());
+    } finally {
+      if (mounted) setState(() => _flashSaleBusy = false);
+    }
+  }
+
   Future<void> _upload() async {
     if (_selectedFiles.isEmpty) {
       _showMessage('Pilih file dulu');
@@ -5028,9 +5092,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     final start = (flash['schedule_start_time'] ?? '-')
                         .toString();
                     final end = (flash['schedule_end_time'] ?? '-').toString();
-                    final active = flash['active'] == true
-                        ? 'AKTIF'
-                        : 'NONAKTIF';
+                    final isDraft = flash['is_draft'] == true;
+                    final active = isDraft
+                        ? 'DRAFT'
+                        : (flash['active'] == true ? 'AKTIF' : 'NONAKTIF');
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 6),
                       child: Row(
@@ -5039,9 +5104,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                             child: Text(
                               '$name: [$active] hari=$days | jam=$start - $end',
                               style: TextStyle(
-                                color: flash['active'] == true
-                                    ? const Color(0xFF166534)
-                                    : const Color(0xFF334155),
+                                color: isDraft
+                                    ? const Color(0xFF92400E)
+                                    : (flash['active'] == true
+                                          ? const Color(0xFF166534)
+                                          : const Color(0xFF334155)),
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -5077,6 +5144,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 onPressed: _flashSaleBusy ? null : _openScheduleFlashSaleDialog,
                 icon: const Icon(Icons.schedule),
                 label: const Text('Jadwalkan Flashsale'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _flashSaleBusy ? null : _saveFlashSaleDraft,
+                icon: const Icon(Icons.drafts),
+                label: const Text('Simpan Draft'),
               ),
               OutlinedButton.icon(
                 onPressed: _flashSaleBusy ? null : _disableFlashSaleForTargets,

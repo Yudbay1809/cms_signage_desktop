@@ -15,13 +15,15 @@ void main() {
   runApp(const CmsApp());
 }
 
+enum _NoticeTone { info, success, warning, error }
+
 class CmsApp extends StatelessWidget {
   const CmsApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF0E7490),
+      seedColor: const Color(0xFF0B6E4F),
       brightness: Brightness.light,
     );
     return MaterialApp(
@@ -29,7 +31,8 @@ class CmsApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: colorScheme,
-        scaffoldBackgroundColor: const Color(0xFFF2F6FB),
+        fontFamily: 'Trebuchet MS',
+        scaffoldBackgroundColor: const Color(0xFFF5F7FB),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
@@ -44,20 +47,24 @@ class CmsApp extends StatelessWidget {
           ),
           margin: EdgeInsets.zero,
         ),
+        textTheme: ThemeData.light().textTheme.apply(
+          bodyColor: const Color(0xFF0F172A),
+          displayColor: const Color(0xFF0F172A),
+        ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFFF8FBFF),
+          fillColor: Colors.white.withValues(alpha: 0.9),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFD7DEE9)),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFD7DEE9)),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: colorScheme.primary, width: 1.4),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: colorScheme.primary, width: 1.6),
           ),
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 12,
@@ -66,23 +73,35 @@ class CmsApp extends StatelessWidget {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: colorScheme.primary,
+            backgroundColor: const Color(0xFF0F766E),
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF115E59),
+            side: const BorderSide(color: Color(0xFF99F6E4)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700),
           ),
         ),
         tabBarTheme: TabBarThemeData(
           labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
+          unselectedLabelColor: Colors.white.withValues(alpha: 0.72),
           indicator: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.16),
+            color: Colors.white.withValues(alpha: 0.22),
             borderRadius: BorderRadius.circular(12),
           ),
           indicatorSize: TabBarIndicatorSize.tab,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w700),
+          dividerColor: Colors.transparent,
         ),
       ),
       builder: (context, child) {
@@ -244,6 +263,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   DateTime? _lastSnackAt;
   DateTime _suppressMessageUntil = DateTime.now();
   bool _showSnackbarNotifications = false;
+  String _lastNoticeMessage = '';
+  DateTime? _lastNoticeAt;
+  _NoticeTone _lastNoticeTone = _NoticeTone.info;
   bool _deviceMediaCheckBusy = false;
   DateTime? _deviceMediaCheckedAt;
   final Map<String, Map<String, dynamic>> _deviceMediaStatusByDevice = {};
@@ -251,6 +273,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   DateTime? _deviceSyncCheckedAt;
   final Map<String, Map<String, dynamic>> _deviceSyncStatusByDevice = {};
   final Set<String> _deviceMediaDownloadRequestBusyIds = {};
+  Duration? _flashSaleLastDownloadDuration;
+  DateTime? _flashSaleLastDownloadAt;
+  int _flashSaleLastDownloadRequiredCount = 0;
+  int _flashSaleLastDownloadTargetCount = 0;
+  bool _flashSaleLastDownloadSuccess = false;
 
   @override
   void initState() {
@@ -515,6 +542,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       }
       return;
     }
+    if (!silent) {
+      _showMessage('Memuat data terbaru...');
+    }
     if (_enableRealtimeAutoRefresh) {
       _connectRealtime();
     }
@@ -569,6 +599,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         if (_gridTargetDeviceId != null && _gridTargetPreviewItems.isEmpty) {
           await _loadGridPreviewForDevice(_gridTargetDeviceId!, silent: true);
         }
+      }
+      if (!silent) {
+        _showMessage(
+          'Refresh selesai: ${devices.length} device, ${mediaPage.total} media',
+        );
       }
     } catch (e) {
       setState(() => _lastError = e.toString());
@@ -1150,11 +1185,77 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     if (!mounted) return;
     final message = msg.trim();
     if (message.isEmpty) return;
-    // Popup snackbar dimatikan total karena mengganggu operator saat refresh.
-    // Pesan error tetap terlihat pada label inline "Error: ..." di header.
-    if (_looksLikeErrorMessage(message)) {
-      setState(() => _lastError = message);
+    final tone = _noticeToneFromMessage(message);
+    setState(() {
+      _lastNoticeMessage = message;
+      _lastNoticeAt = DateTime.now();
+      _lastNoticeTone = tone;
+      if (tone == _NoticeTone.error) {
+        _lastError = message;
+      }
+    });
+    if (_showSnackbarNotifications && (force || !_refreshing)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: _noticeColor(tone),
+          duration: Duration(seconds: tone == _NoticeTone.error ? 5 : 3),
+        ),
+      );
     }
+  }
+
+  _NoticeTone _noticeToneFromMessage(String message) {
+    final lower = message.toLowerCase();
+    if (_looksLikeErrorMessage(message)) return _NoticeTone.error;
+    if (lower.contains('warning') ||
+        lower.contains('peringatan') ||
+        lower.contains('belum') ||
+        lower.contains('pending')) {
+      return _NoticeTone.warning;
+    }
+    if (lower.contains('berhasil') ||
+        lower.contains('sukses') ||
+        lower.contains('selesai') ||
+        lower.contains('ready') ||
+        lower.contains('live')) {
+      return _NoticeTone.success;
+    }
+    return _NoticeTone.info;
+  }
+
+  Color _noticeColor(_NoticeTone tone) {
+    switch (tone) {
+      case _NoticeTone.success:
+        return const Color(0xFF166534);
+      case _NoticeTone.warning:
+        return const Color(0xFFB45309);
+      case _NoticeTone.error:
+        return const Color(0xFFB91C1C);
+      case _NoticeTone.info:
+        return const Color(0xFF1D4ED8);
+    }
+  }
+
+  IconData _noticeIcon(_NoticeTone tone) {
+    switch (tone) {
+      case _NoticeTone.success:
+        return Icons.check_circle;
+      case _NoticeTone.warning:
+        return Icons.warning_amber_rounded;
+      case _NoticeTone.error:
+        return Icons.error;
+      case _NoticeTone.info:
+        return Icons.info;
+    }
+  }
+
+  String _formatDurationShort(Duration duration) {
+    if (duration.inSeconds < 60) return '${duration.inSeconds} detik';
+    final min = duration.inMinutes;
+    final sec = duration.inSeconds % 60;
+    return '${min}m ${sec.toString().padLeft(2, '0')}d';
   }
 
   bool _looksLikeErrorMessage(String message) {
@@ -1806,6 +1907,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _flashSaleDownloadBusy = true;
       _flashSaleDownloadProgress = 'Mulai cek sinkron media...';
     });
+    final startedAt = DateTime.now();
+    final targetCount = targetDeviceIds.length;
+    final requiredCount = requiredMediaIds.length;
     try {
       const maxAttempts = 12;
       for (var attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1828,8 +1932,16 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           );
           await _checkFlashSaleMediaSyncStatus();
           if (_flashSaleMediaReadyForTargets()) {
+            final elapsed = DateTime.now().difference(startedAt);
+            setState(() {
+              _flashSaleLastDownloadDuration = elapsed;
+              _flashSaleLastDownloadAt = DateTime.now();
+              _flashSaleLastDownloadRequiredCount = requiredCount;
+              _flashSaleLastDownloadTargetCount = targetCount;
+              _flashSaleLastDownloadSuccess = true;
+            });
             _showMessage(
-              'Media Flash Sale sudah siap di semua device target (buffer selesai)',
+              'Media Flash Sale siap (${requiredCount} media, ${targetCount} device) dalam ${_formatDurationShort(elapsed)}',
             );
             return true;
           }
@@ -1859,8 +1971,16 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           );
         }
       }
+      final elapsed = DateTime.now().difference(startedAt);
+      setState(() {
+        _flashSaleLastDownloadDuration = elapsed;
+        _flashSaleLastDownloadAt = DateTime.now();
+        _flashSaleLastDownloadRequiredCount = requiredCount;
+        _flashSaleLastDownloadTargetCount = targetCount;
+        _flashSaleLastDownloadSuccess = false;
+      });
       _showMessage(
-        'Media belum selesai terdownload. Klik "Cek Sinkron Media Device" untuk lihat device yang masih kurang.',
+        'Media belum selesai terdownload setelah ${_formatDurationShort(elapsed)}. Klik "Cek Sinkron Media Device" untuk detail.',
       );
       return false;
     } finally {
@@ -3686,9 +3806,29 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     final compactTop = MediaQuery.sizeOf(context).width < 1060;
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Content Control',
-          style: TextStyle(fontWeight: FontWeight.w700),
+        toolbarHeight: 76,
+        titleSpacing: 18,
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Content Control',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.2,
+              ),
+            ),
+            SizedBox(height: 2),
+            Text(
+              'Digital Signage Command Center',
+              style: TextStyle(
+                fontSize: 12,
+                color: Color(0xFFCFFAFE),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
         actions: const [
           Padding(
@@ -3708,189 +3848,302 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFF0F766E), Color(0xFF0369A1), Color(0xFF1D4ED8)],
+              colors: [Color(0xFF115E59), Color(0xFF0E7490), Color(0xFF1E40AF)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
         ),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(54),
+          preferredSize: const Size.fromHeight(58),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-            child: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              tabs: const [
-                Tab(text: 'Media'),
-                Tab(text: 'Buat Playlist'),
-                Tab(text: 'Kelola Playlist'),
-                Tab(text: 'Flash Sale'),
-                Tab(text: 'Kelola Penayangan'),
-                Tab(text: 'Kelola Grid'),
-                Tab(text: 'Devices'),
-              ],
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+              ),
+              child: TabBar(
+                controller: _tabController,
+                isScrollable: true,
+                tabs: const [
+                  Tab(icon: Icon(Icons.perm_media), text: 'Media'),
+                  Tab(icon: Icon(Icons.playlist_add), text: 'Buat Playlist'),
+                  Tab(icon: Icon(Icons.edit_note), text: 'Kelola Playlist'),
+                  Tab(icon: Icon(Icons.local_fire_department), text: 'Flash Sale'),
+                  Tab(icon: Icon(Icons.schedule), text: 'Kelola Penayangan'),
+                  Tab(icon: Icon(Icons.grid_view_rounded), text: 'Kelola Grid'),
+                  Tab(icon: Icon(Icons.devices), text: 'Devices'),
+                ],
+              ),
             ),
           ),
         ),
       ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF8FAFD), Color(0xFFF0F7FF)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+      body: Stack(
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFF8FAFC), Color(0xFFEEF6FF)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
           ),
-        ),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: compactTop
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            TextField(
-                              controller: _baseUrlController,
-                              decoration: const InputDecoration(
-                                labelText: 'Base URL',
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: _apiKeyController,
-                              decoration: const InputDecoration(
-                                labelText: 'API Key (opsional)',
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                ElevatedButton(
-                                  onPressed: _refreshing ? null : _refresh,
-                                  child: const Text('Refresh'),
-                                ),
-                                ElevatedButton(
-                                  onPressed: _exportConfig,
-                                  child: const Text('Export'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        )
-                      : Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
+          Positioned(
+            top: -120,
+            right: -80,
+            child: Container(
+              width: 260,
+              height: 260,
+              decoration: BoxDecoration(
+                color: const Color(0xFF93C5FD).withValues(alpha: 0.25),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -130,
+            left: -90,
+            child: Container(
+              width: 280,
+              height: 280,
+              decoration: BoxDecoration(
+                color: const Color(0xFF99F6E4).withValues(alpha: 0.24),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Card(
+                  elevation: 5,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: compactTop
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextField(
                                 controller: _baseUrlController,
                                 decoration: const InputDecoration(
                                   labelText: 'Base URL',
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 180,
-                              child: TextField(
+                              const SizedBox(height: 8),
+                              TextField(
                                 controller: _apiKeyController,
                                 decoration: const InputDecoration(
                                   labelText: 'API Key (opsional)',
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: _refreshing ? null : _refresh,
-                              child: const Text('Refresh'),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: _exportConfig,
-                              child: const Text('Export'),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  child: Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      FilterChip(
-                        selected: _showSnackbarNotifications,
-                        onSelected: (_) {},
-                        label: const Text('Popup Notif: Disabled'),
-                      ),
-                      if (_lastRefreshAt != null)
-                        Text('Last: ${_lastRefreshAt!.toLocal()}'),
-                      if (_refreshing)
-                        const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            SizedBox(width: 8),
-                            Text('Refreshing...'),
-                          ],
-                        ),
-                      if (!_refreshing && _lastError != null)
-                        SizedBox(
-                          width: compactTop
-                              ? MediaQuery.sizeOf(context).width - 90
-                              : 420,
-                          child: Text(
-                            'Error: $_lastError',
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.red),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  ElevatedButton.icon(
+                                    onPressed: _refreshing ? null : _refresh,
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('Refresh'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: _exportConfig,
+                                    icon: const Icon(Icons.ios_share),
+                                    label: const Text('Export'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _baseUrlController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Base URL',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: 180,
+                                child: TextField(
+                                  controller: _apiKeyController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'API Key (opsional)',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton.icon(
+                                onPressed: _refreshing ? null : _refresh,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Refresh'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: _exportConfig,
+                                icon: const Icon(Icons.ios_share),
+                                label: const Text('Export'),
+                              ),
+                            ],
                           ),
-                        ),
-                    ],
                   ),
                 ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Card(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: TabBarView(
-                      controller: _tabController,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _mediaTab(),
-                        _playlistTab(),
-                        _playlistManageTab(),
-                        _flashSaleTab(),
-                        _scheduleTab(),
-                        _gridManagementTab(),
-                        _devicesTab(),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            FilterChip(
+                              selected: _showSnackbarNotifications,
+                              onSelected: (value) {
+                                setState(() => _showSnackbarNotifications = value);
+                                _showMessage(
+                                  value
+                                      ? 'Popup notification diaktifkan'
+                                      : 'Popup notification dimatikan',
+                                  force: true,
+                                );
+                              },
+                              label: Text(
+                                _showSnackbarNotifications
+                                    ? 'Popup Notif: ON'
+                                    : 'Popup Notif: OFF',
+                              ),
+                            ),
+                            if (_lastRefreshAt != null)
+                              Text('Last: ${_lastRefreshAt!.toLocal()}'),
+                            if (_refreshing)
+                              const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text('Refreshing...'),
+                                ],
+                              ),
+                          ],
+                        ),
+                        if (_lastNoticeMessage.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _noticeColor(
+                                _lastNoticeTone,
+                              ).withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: _noticeColor(
+                                  _lastNoticeTone,
+                                ).withValues(alpha: 0.4),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _noticeIcon(_lastNoticeTone),
+                                  size: 17,
+                                  color: _noticeColor(_lastNoticeTone),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _lastNoticeMessage,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: _noticeColor(_lastNoticeTone),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                if (_lastNoticeAt != null)
+                                  Text(
+                                    '${_lastNoticeAt!.hour.toString().padLeft(2, '0')}:${_lastNoticeAt!.minute.toString().padLeft(2, '0')}:${_lastNoticeAt!.second.toString().padLeft(2, '0')}',
+                                    style: TextStyle(
+                                      color: _noticeColor(_lastNoticeTone),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        if (!_refreshing && _lastError != null) ...[
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: compactTop
+                                ? MediaQuery.sizeOf(context).width - 90
+                                : 420,
+                            child: Text(
+                              'Error: $_lastError',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Card(
+                    elevation: 5,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: TabBarView(
+                        controller: _tabController,
+                        children: [
+                          _mediaTab(),
+                          _playlistTab(),
+                          _playlistManageTab(),
+                          _flashSaleTab(),
+                          _scheduleTab(),
+                          _gridManagementTab(),
+                          _devicesTab(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -4975,6 +5228,36 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (_flashSaleLastDownloadAt != null &&
+                    _flashSaleLastDownloadDuration != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _flashSaleLastDownloadSuccess
+                          ? const Color(0xFFECFDF5)
+                          : const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: _flashSaleLastDownloadSuccess
+                            ? const Color(0xFF86EFAC)
+                            : const Color(0xFFFCD34D),
+                      ),
+                    ),
+                    child: Text(
+                      _flashSaleLastDownloadSuccess
+                          ? 'Kecepatan download terakhir: ${_flashSaleLastDownloadRequiredCount} media ke ${_flashSaleLastDownloadTargetCount} device selesai dalam ${_formatDurationShort(_flashSaleLastDownloadDuration!)}'
+                          : 'Download terakhir belum selesai setelah ${_formatDurationShort(_flashSaleLastDownloadDuration!)} (${_flashSaleLastDownloadRequiredCount} media, ${_flashSaleLastDownloadTargetCount} device)',
+                      style: TextStyle(
+                        color: _flashSaleLastDownloadSuccess
+                            ? const Color(0xFF166534)
+                            : const Color(0xFF92400E),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

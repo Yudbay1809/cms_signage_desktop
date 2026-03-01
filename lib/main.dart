@@ -17,6 +17,17 @@ void main() {
 
 enum _NoticeTone { info, success, warning, error }
 
+enum _MediaViewMode {
+  extraLargeIcons,
+  largeIcons,
+  mediumIcons,
+  smallIcons,
+  list,
+  details,
+  tiles,
+  content,
+}
+
 class CmsApp extends StatelessWidget {
   const CmsApp({super.key});
 
@@ -242,6 +253,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   String? _bulkPlaylistName;
   List<File> _selectedFiles = [];
   String _mediaType = 'auto';
+  _MediaViewMode _mediaViewMode = _MediaViewMode.details;
+  bool _mediaSelectionMode = false;
   int _durationSec = 10;
   String _playlistMediaQuery = '';
   String _playlistMediaFilter = 'all';
@@ -272,6 +285,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   bool _deviceSyncCheckBusy = false;
   DateTime? _deviceSyncCheckedAt;
   final Map<String, Map<String, dynamic>> _deviceSyncStatusByDevice = {};
+  final Map<String, String> _lastMediaTierByDevice = {};
   final Set<String> _deviceMediaDownloadRequestBusyIds = {};
   Duration? _flashSaleLastDownloadDuration;
   DateTime? _flashSaleLastDownloadAt;
@@ -555,6 +569,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     });
     try {
       final devices = await _api.listDevices();
+      _emitMediaTierNotifications(devices);
       final mediaPage = await _api.listMediaPage(
         offset: 0,
         limit: _mediaPageSize,
@@ -1206,6 +1221,41 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
+  void _emitMediaTierNotifications(List<DeviceInfo> devices) {
+    final currentById = <String, String>{};
+    for (final d in devices) {
+      final level = d.mediaTierLevel.trim().isEmpty
+          ? 'pending'
+          : d.mediaTierLevel.trim();
+      currentById[d.id] = level;
+      final prev = _lastMediaTierByDevice[d.id];
+      if (prev == null || prev == level) continue;
+      final rank = _tierRank(level);
+      final prevRank = _tierRank(prev);
+      if (rank > prevRank) {
+        _showMessage('${d.name}: tier media naik ke ${d.mediaTierLabel}');
+      }
+    }
+    _lastMediaTierByDevice
+      ..clear()
+      ..addAll(currentById);
+  }
+
+  int _tierRank(String level) {
+    switch (level.toLowerCase()) {
+      case 'high_ready':
+        return 4;
+      case 'normal_ready':
+        return 3;
+      case 'low_ready':
+        return 2;
+      case 'low_partial':
+        return 1;
+      default:
+        return 0;
+    }
+  }
+
   _NoticeTone _noticeToneFromMessage(String message) {
     final lower = message.toLowerCase();
     if (_looksLikeErrorMessage(message)) return _NoticeTone.error;
@@ -1356,6 +1406,428 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     return '';
   }
 
+  void _toggleMediaSelection(String mediaId) {
+    setState(() {
+      if (_selectedMediaForDeleteIds.contains(mediaId)) {
+        _selectedMediaForDeleteIds.remove(mediaId);
+      } else {
+        _selectedMediaForDeleteIds.add(mediaId);
+      }
+    });
+  }
+
+  String _mediaViewModeLabel(_MediaViewMode mode) {
+    switch (mode) {
+      case _MediaViewMode.extraLargeIcons:
+        return 'Extra large icons';
+      case _MediaViewMode.largeIcons:
+        return 'Large icons';
+      case _MediaViewMode.mediumIcons:
+        return 'Medium icons';
+      case _MediaViewMode.smallIcons:
+        return 'Small icons';
+      case _MediaViewMode.list:
+        return 'List';
+      case _MediaViewMode.details:
+        return 'Details';
+      case _MediaViewMode.tiles:
+        return 'Tiles';
+      case _MediaViewMode.content:
+        return 'Content';
+    }
+  }
+
+  IconData _mediaViewModeIcon(_MediaViewMode mode) {
+    switch (mode) {
+      case _MediaViewMode.extraLargeIcons:
+      case _MediaViewMode.largeIcons:
+      case _MediaViewMode.mediumIcons:
+      case _MediaViewMode.smallIcons:
+        return Icons.grid_view_rounded;
+      case _MediaViewMode.list:
+        return Icons.list;
+      case _MediaViewMode.details:
+        return Icons.view_headline;
+      case _MediaViewMode.tiles:
+        return Icons.view_agenda;
+      case _MediaViewMode.content:
+        return Icons.notes;
+    }
+  }
+
+  double _mediaThumbSize(_MediaViewMode mode) {
+    switch (mode) {
+      case _MediaViewMode.extraLargeIcons:
+        return 124;
+      case _MediaViewMode.largeIcons:
+        return 96;
+      case _MediaViewMode.mediumIcons:
+        return 72;
+      case _MediaViewMode.smallIcons:
+        return 44;
+      case _MediaViewMode.list:
+      case _MediaViewMode.details:
+      case _MediaViewMode.tiles:
+      case _MediaViewMode.content:
+        return 56;
+    }
+  }
+
+  Widget _mediaThumbnail(
+    MediaInfo media, {
+    double size = 56,
+    BorderRadius? borderRadius,
+  }) {
+    final isImage = media.type == 'image' || _isImagePath(media.path);
+    final isVideo = media.type == 'video' || _isVideoPath(media.path);
+    final radius = borderRadius ?? BorderRadius.circular(10);
+    if (isImage) {
+      return ClipRRect(
+        borderRadius: radius,
+        child: Image.network(
+          _absoluteUrl(media.path),
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => _mediaThumbnailFallback(media, size),
+        ),
+      );
+    }
+    return _mediaThumbnailFallback(media, size, isVideo: isVideo);
+  }
+
+  Widget _mediaThumbnailFallback(
+    MediaInfo media,
+    double size, {
+    bool isVideo = false,
+  }) {
+    final icon = isVideo ? Icons.videocam_rounded : Icons.image_rounded;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFFE2E8F0),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, size: size * 0.5, color: const Color(0xFF334155)),
+    );
+  }
+
+  Widget _buildMediaItemsView(double maxWidth) {
+    if (_media.isEmpty) {
+      return const Center(child: Text('Belum ada media'));
+    }
+    final mode = _mediaViewMode;
+    if (mode == _MediaViewMode.list ||
+        mode == _MediaViewMode.details ||
+        mode == _MediaViewMode.tiles ||
+        mode == _MediaViewMode.content) {
+      return ListView.builder(
+        itemCount: _media.length,
+        itemBuilder: (context, i) {
+          final m = _media[i];
+          final selected = _selectedMediaForDeleteIds.contains(m.id);
+          final inferredType = _isVideoPath(m.path)
+              ? 'video'
+              : _isImagePath(m.path)
+              ? 'image'
+              : m.type;
+          if (mode == _MediaViewMode.list) {
+            return ListTile(
+              dense: true,
+              leading: _mediaSelectionMode
+                  ? Checkbox(
+                      value: selected,
+                      onChanged: (_) => _toggleMediaSelection(m.id),
+                    )
+                  : _mediaThumbnail(m, size: 34),
+              title: Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(inferredType),
+              trailing: TextButton(
+                onPressed: () => _previewMedia(m),
+                child: const Text('Preview'),
+              ),
+              onTap: () => _mediaSelectionMode
+                  ? _toggleMediaSelection(m.id)
+                  : _previewMedia(m),
+            );
+          }
+          if (mode == _MediaViewMode.details) {
+            return Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.blueGrey.withValues(alpha: 0.14),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  _mediaSelectionMode
+                      ? SizedBox(
+                          width: 44,
+                          child: Checkbox(
+                            value: selected,
+                            onChanged: (_) => _toggleMediaSelection(m.id),
+                          ),
+                        )
+                      : SizedBox(
+                          width: 44,
+                          child: _mediaThumbnail(m, size: 30),
+                        ),
+                  Expanded(
+                    flex: 2,
+                    child: Text(
+                      m.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Expanded(flex: 1, child: Text(inferredType)),
+                  Expanded(
+                    flex: 3,
+                    child: Text(
+                      m.path,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  SizedBox(
+                    width: 146,
+                    child: Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => _previewMedia(m),
+                          child: const Text('Preview'),
+                        ),
+                        TextButton(
+                          onPressed: () => _deleteMedia(m),
+                          child: const Text('Delete'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+          if (mode == _MediaViewMode.tiles) {
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                leading: Stack(
+                  children: [
+                    _mediaThumbnail(m, size: 68),
+                    Positioned(
+                      top: -6,
+                      left: -8,
+                      child: Checkbox(
+                        value: selected,
+                        onChanged: (_) => _toggleMediaSelection(m.id),
+                      ),
+                    ),
+                  ],
+                ),
+                title: Text(
+                  m.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '$inferredType\n${m.path}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                isThreeLine: true,
+                trailing: Wrap(
+                  spacing: 4,
+                  children: [
+                    IconButton(
+                      onPressed: () => _previewMedia(m),
+                      icon: const Icon(Icons.visibility),
+                      tooltip: 'Preview',
+                    ),
+                    IconButton(
+                      onPressed: () => _deleteMedia(m),
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Delete',
+                    ),
+                  ],
+                ),
+                onTap: () => _mediaSelectionMode
+                    ? _toggleMediaSelection(m.id)
+                    : _previewMedia(m),
+              ),
+            );
+          }
+          return ListTile(
+            leading: _mediaThumbnail(m, size: 56),
+            title: Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              '$inferredType | ${m.path}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: _mediaSelectionMode
+                ? Checkbox(
+                    value: selected,
+                    onChanged: (_) => _toggleMediaSelection(m.id),
+                  )
+                : null,
+            onTap: () => _mediaSelectionMode
+                ? _toggleMediaSelection(m.id)
+                : _previewMedia(m),
+          );
+        },
+      );
+    }
+
+    final thumb = _mediaThumbSize(mode);
+    final tileWidth = thumb + 74;
+    final columns = math.max(1, (maxWidth / tileWidth).floor());
+    final cardAspect = switch (mode) {
+      _MediaViewMode.extraLargeIcons => 0.74,
+      _MediaViewMode.largeIcons => 0.82,
+      _MediaViewMode.mediumIcons => 0.9,
+      _MediaViewMode.smallIcons => 0.9,
+      _ => 0.9,
+    };
+    return GridView.builder(
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: cardAspect,
+      ),
+      itemCount: _media.length,
+      itemBuilder: (context, i) {
+        final m = _media[i];
+        final selected = _selectedMediaForDeleteIds.contains(m.id);
+        final inferredType = _isVideoPath(m.path)
+            ? 'video'
+            : _isImagePath(m.path)
+            ? 'image'
+            : m.type;
+        if (mode == _MediaViewMode.smallIcons) {
+          return InkWell(
+            onTap: () => _mediaSelectionMode
+                ? _toggleMediaSelection(m.id)
+                : _previewMedia(m),
+            onDoubleTap: () => _previewMedia(m),
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    height: 18,
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: _mediaSelectionMode
+                          ? Checkbox(
+                              visualDensity: VisualDensity.compact,
+                              value: selected,
+                              onChanged: (_) => _toggleMediaSelection(m.id),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ),
+                  _mediaThumbnail(m, size: thumb),
+                  const SizedBox(height: 6),
+                  Text(
+                    m.name,
+                    maxLines: 1,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      color: selected
+                          ? const Color(0xFF0C4A6E)
+                          : const Color(0xFF0F172A),
+                    ),
+                  ),
+                  Text(
+                    inferredType,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return InkWell(
+          onTap: () => _mediaSelectionMode
+              ? _toggleMediaSelection(m.id)
+              : _previewMedia(m),
+          onDoubleTap: () => _previewMedia(m),
+          borderRadius: BorderRadius.circular(12),
+          child: Card(
+            elevation: selected ? 3 : 1,
+            color: selected
+                ? const Color(0xFFE0F2FE)
+                : Colors.white.withValues(alpha: 0.95),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: selected
+                    ? const Color(0xFF0284C7)
+                    : const Color(0xFFD7DEE9),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    height: 20,
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: _mediaSelectionMode
+                          ? Checkbox(
+                              visualDensity: VisualDensity.compact,
+                              value: selected,
+                              onChanged: (_) => _toggleMediaSelection(m.id),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ),
+                  Center(child: _mediaThumbnail(m, size: thumb)),
+                  const SizedBox(height: 8),
+                  Text(
+                    m.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    inferredType,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF475569),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   List<MediaInfo> _filteredMediaForPlaylist() {
     final query = _playlistMediaQuery.trim().toLowerCase();
     return _media.where((m) {
@@ -1392,10 +1864,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     final hm = _formatHm(input);
     if (hm.isEmpty) return null;
     final parts = hm.split(':');
-    return TimeOfDay(
-      hour: int.parse(parts[0]),
-      minute: int.parse(parts[1]),
-    );
+    return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
   }
 
   String _timeOfDayToHm(TimeOfDay value) {
@@ -1569,15 +2038,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   String _formatScheduleDaysLabel(String? csv) {
-    final dayLabels = <int, String>{
-      0: 'Sen',
-      1: 'Sel',
-      2: 'Rab',
-      3: 'Kam',
-      4: 'Jum',
-      5: 'Sab',
-      6: 'Min',
-    };
+    final dayLabels = _scheduleDayLabelsShort;
     final ids =
         (csv ?? '')
             .split(',')
@@ -1599,31 +2060,97 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         .toSet();
   }
 
-  Future<void> _editFlashSaleScheduleForDevice(
+  List<_FlashSaleProductDraft> _parseFlashSaleDraftProducts(String? rawJson) {
+    final raw = (rawJson ?? '').trim();
+    if (raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      final rows = <_FlashSaleProductDraft>[];
+      for (final row in decoded) {
+        if (row is! Map) continue;
+        final map = row.cast<dynamic, dynamic>();
+        final name = (map['name'] ?? '').toString().trim();
+        if (name.isEmpty) continue;
+        rows.add(
+          _FlashSaleProductDraft(
+            name: name,
+            brand: (map['brand'] ?? '').toString().trim(),
+            normalPrice: (map['normal_price'] ?? '').toString().trim(),
+            promoPrice: (map['promo_price'] ?? '').toString().trim(),
+            stock: (map['stock'] ?? '').toString().trim(),
+            mediaId: _resolveMediaIdToKnown(
+              (map['media_id'] ?? '').toString().trim(),
+            ),
+          ),
+        );
+      }
+      return rows;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  void _loadFlashSaleDraftForDevice(
     String deviceId,
     Map<String, dynamic> runtime,
-  ) async {
+  ) {
     final days = _parseScheduleDaysCsv(runtime['schedule_days']?.toString());
     final start = _formatHm((runtime['schedule_start_time'] ?? '').toString());
     final end = _formatHm((runtime['schedule_end_time'] ?? '').toString());
+    final note = (runtime['note'] ?? '').toString();
+    final countdown = (runtime['countdown_sec'] as num?)?.toInt();
+    final parsedProducts = _parseFlashSaleDraftProducts(
+      runtime['products_json']?.toString(),
+    );
 
     setState(() {
       _flashSaleDeviceIds
         ..clear()
         ..add(deviceId);
-      if (days.isNotEmpty) {
-        _flashSaleScheduleDays
+      _flashSaleNoteController.text = note;
+      if (countdown != null && countdown > 0) {
+        _flashSaleCountdownController.text = countdown.toString();
+      }
+      _flashSaleScheduleDays
+        ..clear()
+        ..addAll(days);
+      _flashSaleScheduleStartController.text = start;
+      _flashSaleScheduleEndController.text = end;
+      if (parsedProducts.isNotEmpty) {
+        _flashSaleProducts
           ..clear()
-          ..addAll(days);
+          ..addAll(parsedProducts);
       }
-      if (start.isNotEmpty) {
-        _flashSaleScheduleStartController.text = start;
-      }
-      if (end.isNotEmpty) {
-        _flashSaleScheduleEndController.text = end;
-      }
+      _resetFlashSaleMediaCheckStatus();
     });
-    await _openScheduleFlashSaleDialog();
+
+    _showMessage(
+      'Draft $deviceId dimuat. Edit field lalu klik "Simpan Draft".',
+    );
+  }
+
+  static const Map<int, String> _scheduleDayLabelsShort = {
+    0: 'Sen',
+    1: 'Sel',
+    2: 'Rab',
+    3: 'Kam',
+    4: 'Jum',
+    5: 'Sab',
+    6: 'Min',
+  };
+
+  int _todayScheduleDayIndex() => DateTime.now().weekday - 1;
+
+  String _todayScheduleLabel() =>
+      _scheduleDayLabelsShort[_todayScheduleDayIndex()] ?? '-';
+
+  String _todayDateLabel() {
+    final now = DateTime.now();
+    final dd = now.day.toString().padLeft(2, '0');
+    final mm = now.month.toString().padLeft(2, '0');
+    final yyyy = now.year.toString();
+    return '$dd/$mm/$yyyy';
   }
 
   int? _flashSaleCountdownFromInput() {
@@ -1994,7 +2521,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   bool _isSyncStatusSafeForFlashSale(Map<String, dynamic> status) {
-    final queue = (status['queue_status'] ?? '').toString().trim().toLowerCase();
+    final queue = (status['queue_status'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
     if (queue == 'ready') return true;
     if (queue != 'ready_with_warnings') return false;
     final failedItems = (status['failed_items'] as List<dynamic>? ?? const []);
@@ -2602,7 +3132,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     if (!_validateFlashSaleMetaInput()) return;
     final targetDeviceIds = _flashSaleTargetDeviceIds();
     if (targetDeviceIds.isEmpty) {
-      _showMessage('Pilih minimal satu device untuk menyimpan draft Flash Sale');
+      _showMessage(
+        'Pilih minimal satu device untuk menyimpan draft Flash Sale',
+      );
       return;
     }
 
@@ -3734,9 +4266,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           final status = await _api.fetchDeviceMediaCacheStatus(deviceId);
           _deviceMediaStatusByDevice[deviceId] = status;
         } catch (e) {
-          _deviceMediaStatusByDevice[deviceId] = {
-            'error': e.toString(),
-          };
+          _deviceMediaStatusByDevice[deviceId] = {'error': e.toString()};
         }
       }
       _deviceMediaCheckedAt = DateTime.now();
@@ -3788,9 +4318,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           final status = await _api.fetchDeviceSyncStatus(deviceId);
           _deviceSyncStatusByDevice[deviceId] = status;
         } catch (e) {
-          _deviceSyncStatusByDevice[deviceId] = {
-            'error': e.toString(),
-          };
+          _deviceSyncStatusByDevice[deviceId] = {'error': e.toString()};
         }
       }
       _deviceSyncCheckedAt = DateTime.now();
@@ -3814,10 +4342,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           children: [
             Text(
               'Content Control',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.2,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 0.2),
             ),
             SizedBox(height: 2),
             Text(
@@ -3871,7 +4396,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   Tab(icon: Icon(Icons.perm_media), text: 'Media'),
                   Tab(icon: Icon(Icons.playlist_add), text: 'Buat Playlist'),
                   Tab(icon: Icon(Icons.edit_note), text: 'Kelola Playlist'),
-                  Tab(icon: Icon(Icons.local_fire_department), text: 'Flash Sale'),
+                  Tab(
+                    icon: Icon(Icons.local_fire_department),
+                    text: 'Flash Sale',
+                  ),
                   Tab(icon: Icon(Icons.schedule), text: 'Kelola Penayangan'),
                   Tab(icon: Icon(Icons.grid_view_rounded), text: 'Kelola Grid'),
                   Tab(icon: Icon(Icons.devices), text: 'Devices'),
@@ -4016,7 +4544,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                             FilterChip(
                               selected: _showSnackbarNotifications,
                               onSelected: (value) {
-                                setState(() => _showSnackbarNotifications = value);
+                                setState(
+                                  () => _showSnackbarNotifications = value,
+                                );
                                 _showMessage(
                                   value
                                       ? 'Popup notification diaktifkan'
@@ -4302,37 +4832,84 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 runSpacing: 8,
                 children: [
                   Text('Media loaded: ${_media.length} / $_mediaTotal'),
-                  Text('Terpilih: ${_selectedMediaForDeleteIds.length}'),
-                  OutlinedButton.icon(
-                    onPressed: _media.isEmpty
-                        ? null
-                        : () {
-                            setState(() {
-                              if (_selectedMediaForDeleteIds.length ==
-                                  _media.length) {
-                                _selectedMediaForDeleteIds.clear();
-                              } else {
-                                _selectedMediaForDeleteIds
-                                  ..clear()
-                                  ..addAll(_media.map((m) => m.id));
-                              }
-                            });
-                          },
-                    icon: Icon(
-                      _selectedMediaForDeleteIds.length == _media.length &&
-                              _media.isNotEmpty
-                          ? Icons.check_box
-                          : Icons.check_box_outline_blank,
+                  FilterChip(
+                    selected: _mediaSelectionMode,
+                    onSelected: (value) {
+                      setState(() {
+                        _mediaSelectionMode = value;
+                        if (!value) _selectedMediaForDeleteIds.clear();
+                      });
+                      _showMessage(
+                        value ? 'Mode Pilih aktif' : 'Mode Pilih nonaktif',
+                      );
+                    },
+                    label: Text(
+                      _mediaSelectionMode
+                          ? 'Mode Pilih: ON'
+                          : 'Mode Pilih: OFF',
                     ),
-                    label: const Text('Pilih Semua'),
                   ),
-                  ElevatedButton.icon(
-                    onPressed: _selectedMediaForDeleteIds.isEmpty
-                        ? null
-                        : _deleteSelectedMedia,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Hapus Terpilih'),
+                  if (_mediaSelectionMode)
+                    Text('Terpilih: ${_selectedMediaForDeleteIds.length}'),
+                  PopupMenuButton<_MediaViewMode>(
+                    onSelected: (mode) {
+                      setState(() => _mediaViewMode = mode);
+                      _showMessage('View: ${_mediaViewModeLabel(mode)}');
+                    },
+                    itemBuilder: (context) => _MediaViewMode.values
+                        .map(
+                          (mode) => PopupMenuItem<_MediaViewMode>(
+                            value: mode,
+                            child: Row(
+                              children: [
+                                Icon(_mediaViewModeIcon(mode), size: 18),
+                                const SizedBox(width: 8),
+                                Text(_mediaViewModeLabel(mode)),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    child: OutlinedButton.icon(
+                      onPressed: null,
+                      icon: Icon(_mediaViewModeIcon(_mediaViewMode)),
+                      label: Text(
+                        'View: ${_mediaViewModeLabel(_mediaViewMode)}',
+                      ),
+                    ),
                   ),
+                  if (_mediaSelectionMode)
+                    OutlinedButton.icon(
+                      onPressed: _media.isEmpty
+                          ? null
+                          : () {
+                              setState(() {
+                                if (_selectedMediaForDeleteIds.length ==
+                                    _media.length) {
+                                  _selectedMediaForDeleteIds.clear();
+                                } else {
+                                  _selectedMediaForDeleteIds
+                                    ..clear()
+                                    ..addAll(_media.map((m) => m.id));
+                                }
+                              });
+                            },
+                      icon: Icon(
+                        _selectedMediaForDeleteIds.length == _media.length &&
+                                _media.isNotEmpty
+                            ? Icons.check_box
+                            : Icons.check_box_outline_blank,
+                      ),
+                      label: const Text('Pilih Semua'),
+                    ),
+                  if (_mediaSelectionMode)
+                    ElevatedButton.icon(
+                      onPressed: _selectedMediaForDeleteIds.isEmpty
+                          ? null
+                          : _deleteSelectedMedia,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Hapus Terpilih'),
+                    ),
                   if (_mediaOffset < _mediaTotal)
                     OutlinedButton(
                       onPressed: _mediaPageLoading ? null : _loadMoreMedia,
@@ -4343,59 +4920,54 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 ],
               ),
               const SizedBox(height: 12),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _media.length,
-                  itemBuilder: (context, i) {
-                    final m = _media[i];
-                    final selected = _selectedMediaForDeleteIds.contains(m.id);
-                    final inferredType = _isVideoPath(m.path)
-                        ? 'video'
-                        : _isImagePath(m.path)
-                        ? 'image'
-                        : m.type;
-                    return ListTile(
-                      leading: Checkbox(
-                        value: selected,
-                        onChanged: (value) {
-                          setState(() {
-                            if (value == true) {
-                              _selectedMediaForDeleteIds.add(m.id);
-                            } else {
-                              _selectedMediaForDeleteIds.remove(m.id);
-                            }
-                          });
-                        },
+              if (_mediaViewMode == _MediaViewMode.details)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFBFDBFE)),
+                  ),
+                  child: const Row(
+                    children: [
+                      SizedBox(width: 44, child: Text('')),
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          'Name',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
-                      onTap: () {
-                        setState(() {
-                          if (selected) {
-                            _selectedMediaForDeleteIds.remove(m.id);
-                          } else {
-                            _selectedMediaForDeleteIds.add(m.id);
-                          }
-                        });
-                      },
-                      title: Text(m.name),
-                      subtitle: Text('$inferredType | ${m.path}'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          TextButton(
-                            onPressed: () => _previewMedia(m),
-                            child: const Text('Preview'),
-                          ),
-                          const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: () => _deleteMedia(m),
-                            child: const Text('Delete'),
-                          ),
-                        ],
+                      Expanded(
+                        flex: 1,
+                        child: Text(
+                          'Type',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
-                    );
-                  },
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          'Path',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 146,
+                        child: Text(
+                          'Action',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              if (_mediaViewMode == _MediaViewMode.details)
+                const SizedBox(height: 8),
+              Expanded(child: _buildMediaItemsView(constraints.maxWidth)),
             ],
           ),
         );
@@ -4918,25 +5490,57 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFECFDF5),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF86EFAC)),
+                  ),
+                  child: Text(
+                    'Hari ini: ${_todayScheduleLabel()} (${_todayDateLabel()})'
+                    '${_flashSaleScheduleDays.contains(_todayScheduleDayIndex()) ? ' - Sudah terpilih' : ' - Belum terpilih'}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF065F46),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final entry in const {
-                      0: 'Sen',
-                      1: 'Sel',
-                      2: 'Rab',
-                      3: 'Kam',
-                      4: 'Jum',
-                      5: 'Sab',
-                      6: 'Min',
-                    }.entries)
+                    for (final entry in _scheduleDayLabelsShort.entries)
                       Chip(
+                        side: BorderSide(
+                          color: entry.key == _todayScheduleDayIndex()
+                              ? const Color(0xFF059669)
+                              : const Color(0xFFCBD5E1),
+                          width: entry.key == _todayScheduleDayIndex() ? 1.6 : 1,
+                        ),
                         backgroundColor:
-                            _flashSaleScheduleDays.contains(entry.key)
-                            ? const Color(0xFFDBEAFE)
-                            : const Color(0xFFF1F5F9),
-                        label: Text(entry.value),
+                            entry.key == _todayScheduleDayIndex()
+                            ? (_flashSaleScheduleDays.contains(entry.key)
+                                  ? const Color(0xFFBBF7D0)
+                                  : const Color(0xFFFEF3C7))
+                            : (_flashSaleScheduleDays.contains(entry.key)
+                                  ? const Color(0xFFDBEAFE)
+                                  : const Color(0xFFF1F5F9)),
+                        label: Text(
+                          entry.key == _todayScheduleDayIndex()
+                              ? '${entry.value} (Hari ini)'
+                              : entry.value,
+                          style: TextStyle(
+                            fontWeight: entry.key == _todayScheduleDayIndex()
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -5144,10 +5748,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       : 'Download Media Dulu',
                 ),
               ),
-              if (_flashSaleDownloadBusy && _flashSaleDownloadProgress.isNotEmpty)
-                Chip(
-                  label: Text(_flashSaleDownloadProgress),
-                ),
+              if (_flashSaleDownloadBusy &&
+                  _flashSaleDownloadProgress.isNotEmpty)
+                Chip(label: Text(_flashSaleDownloadProgress)),
               if (_flashSaleMediaCheckedAt != null)
                 Chip(
                   label: Text(
@@ -5398,11 +6001,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                           ),
                           const SizedBox(width: 8),
                           OutlinedButton(
-                            onPressed: () => _editFlashSaleScheduleForDevice(
-                              deviceId,
-                              flash,
-                            ),
-                            child: const Text('Edit Jadwal'),
+                            onPressed: () =>
+                                _loadFlashSaleDraftForDevice(deviceId, flash),
+                            child: const Text('Muat Draft'),
                           ),
                         ],
                       ),
@@ -6150,7 +6751,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     final missingCount =
                         (status['missing_count'] as num?)?.toInt() ?? 0;
                     final missing =
-                        (status['missing_media_ids'] as List<dynamic>? ?? const [])
+                        (status['missing_media_ids'] as List<dynamic>? ??
+                                const [])
                             .map((e) => e.toString())
                             .toList();
                     final badge = ready ? 'SIAP' : 'BELUM LENGKAP';
@@ -6245,7 +6847,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         (status['progress_percent'] as num?)?.toInt() ?? 0;
                     final completed =
                         (status['completed_count'] as num?)?.toInt() ?? 0;
-                    final failed = (status['failed_count'] as num?)?.toInt() ?? 0;
+                    final failed =
+                        (status['failed_count'] as num?)?.toInt() ?? 0;
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 6),
                       child: Text(
@@ -6283,16 +6886,27 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                       ? const Color(0xFF15803D)
                       : const Color(0xFF6B7280),
                 );
-                final downloadStatusLabel = d.mediaDownloadStatusLabel.trim().isEmpty
+                final downloadStatusLabel =
+                    d.mediaDownloadStatusLabel.trim().isEmpty
                     ? 'Belum Lapor'
                     : d.mediaDownloadStatusLabel;
-                final requestBusy = _deviceMediaDownloadRequestBusyIds.contains(d.id);
+                final tierColor = _parseHexColor(
+                  d.mediaTierColor,
+                  fallback: const Color(0xFF6B7280),
+                );
+                final tierLabel = d.mediaTierLabel.trim().isEmpty
+                    ? 'Pending'
+                    : d.mediaTierLabel;
+                final requestBusy = _deviceMediaDownloadRequestBusyIds.contains(
+                  d.id,
+                );
                 final canRequestDownload =
                     !requestBusy && !d.mediaDownloadReady && isOnline;
                 final syncStatus = _deviceSyncStatusByDevice[d.id] ?? const {};
-                final queueStatus = (syncStatus['queue_status'] ?? '').toString();
-                final queueProgress =
-                    (syncStatus['progress_percent'] as num?)?.toInt();
+                final queueStatus = (syncStatus['queue_status'] ?? '')
+                    .toString();
+                final queueProgress = (syncStatus['progress_percent'] as num?)
+                    ?.toInt();
                 return CheckboxListTile(
                   value: selected,
                   title: Row(
@@ -6338,6 +6952,25 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         ),
                       ),
                       const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: tierColor.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          tierLabel,
+                          style: TextStyle(
+                            color: tierColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
                       if (queueStatus.isNotEmpty)
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -6345,7 +6978,9 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF0EA5E9).withValues(alpha: 0.14),
+                            color: const Color(
+                              0xFF0EA5E9,
+                            ).withValues(alpha: 0.14),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
@@ -6388,7 +7023,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     ],
                   ),
                   subtitle: Text(
-                    '${d.id} | $orientation | cache: ${d.mediaCachedCount}/${d.mediaRequiredCount} | missing: ${d.mediaMissingCount} | last: ${lastSeen ?? '-'}',
+                    '${d.id} | $orientation | tier low/normal/high: ${d.mediaTierLowReadyCount}/${d.mediaTierNormalReadyCount}/${d.mediaTierHighReadyCount} dari ${d.mediaTierRequiredCount} | cache: ${d.mediaCachedCount}/${d.mediaRequiredCount} | missing: ${d.mediaMissingCount} | last: ${lastSeen ?? '-'}',
                   ),
                   secondary: PopupMenuButton<String>(
                     tooltip: 'Set orientation',

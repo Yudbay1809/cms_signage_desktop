@@ -13,6 +13,16 @@ class DeviceInfo {
   final int mediaCachedCount;
   final int mediaMissingCount;
   final DateTime? mediaCacheUpdatedAt;
+  final String mediaTierLevel;
+  final String mediaTierLabel;
+  final String mediaTierColor;
+  final int mediaTierRequiredCount;
+  final int mediaTierLowReadyCount;
+  final int mediaTierNormalReadyCount;
+  final int mediaTierHighReadyCount;
+  final bool mediaTierLowReady;
+  final bool mediaTierNormalReady;
+  final bool mediaTierHighReady;
 
   DeviceInfo({
     required this.id,
@@ -29,6 +39,16 @@ class DeviceInfo {
     this.mediaCachedCount = 0,
     this.mediaMissingCount = 0,
     this.mediaCacheUpdatedAt,
+    this.mediaTierLevel = 'pending',
+    this.mediaTierLabel = 'Pending',
+    this.mediaTierColor = '#6B7280',
+    this.mediaTierRequiredCount = 0,
+    this.mediaTierLowReadyCount = 0,
+    this.mediaTierNormalReadyCount = 0,
+    this.mediaTierHighReadyCount = 0,
+    this.mediaTierLowReady = false,
+    this.mediaTierNormalReady = false,
+    this.mediaTierHighReady = false,
   });
 
   factory DeviceInfo.fromJson(Map<String, dynamic> json) {
@@ -54,6 +74,20 @@ class DeviceInfo {
       mediaCacheUpdatedAt: json['media_cache_updated_at'] != null
           ? DateTime.tryParse(json['media_cache_updated_at'])
           : null,
+      mediaTierLevel: (json['media_tier_level'] ?? 'pending').toString(),
+      mediaTierLabel: (json['media_tier_label'] ?? 'Pending').toString(),
+      mediaTierColor: (json['media_tier_color'] ?? '#6B7280').toString(),
+      mediaTierRequiredCount:
+          (json['media_tier_required_count'] as num?)?.toInt() ?? 0,
+      mediaTierLowReadyCount:
+          (json['media_tier_low_ready_count'] as num?)?.toInt() ?? 0,
+      mediaTierNormalReadyCount:
+          (json['media_tier_normal_ready_count'] as num?)?.toInt() ?? 0,
+      mediaTierHighReadyCount:
+          (json['media_tier_high_ready_count'] as num?)?.toInt() ?? 0,
+      mediaTierLowReady: json['media_tier_low_ready'] == true,
+      mediaTierNormalReady: json['media_tier_normal_ready'] == true,
+      mediaTierHighReady: json['media_tier_high_ready'] == true,
     );
   }
 }

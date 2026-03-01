@@ -500,15 +500,37 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>?> fetchFlashSaleDeviceRaw(String deviceId) async {
+    final res = await _sendWithRetry(
+      () => http.get(_uri('/flash-sale/device/$deviceId'), headers: _headers()),
+    );
+    if (res.statusCode != 200) {
+      throw Exception(
+        'Fetch flash sale device failed: ${_formatHttpError(res)}',
+      );
+    }
+    final data = jsonDecode(res.body);
+    if (data is! Map) return null;
+    final map = data.cast<dynamic, dynamic>();
+    final flash = map['flash_sale'];
+    if (flash is Map<String, dynamic>) return flash;
+    if (flash is Map) return flash.cast<String, dynamic>();
+    return null;
+  }
+
   Future<void> upsertFlashSaleSchedule({
     required String deviceId,
     required String note,
     required int countdownSec,
     required String productsJson,
     required String scheduleDaysCsv,
+    String? startDate,
+    String? endDate,
     required String startTime,
     required String endTime,
   }) async {
+    final sd = (startDate ?? '').trim();
+    final ed = (endDate ?? '').trim();
     final res = await _sendWithRetry(
       () => http.put(
         _uri('/flash-sale/device/$deviceId/schedule', {
@@ -516,6 +538,8 @@ class ApiService {
           'countdown_sec': countdownSec.toString(),
           'products_json': productsJson,
           'schedule_days': scheduleDaysCsv,
+          if (sd.isNotEmpty && ed.isNotEmpty) 'start_date': sd,
+          if (sd.isNotEmpty && ed.isNotEmpty) 'end_date': ed,
           'start_time': startTime,
           'end_time': endTime,
         }),
@@ -527,12 +551,34 @@ class ApiService {
     }
   }
 
+  Future<void> updateDeviceMediaQualityTier(
+    String deviceId,
+    String mediaQualityTier,
+  ) async {
+    final tier = switch (mediaQualityTier.trim().toLowerCase()) {
+      'low' => 'low',
+      'high' => 'high',
+      _ => 'normal',
+    };
+    final res = await _sendWithRetry(
+      () => http.put(
+        _uri('/devices/$deviceId', {'media_quality_tier': tier}),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Failed to update device tier: ${_formatHttpError(res)}');
+    }
+  }
+
   Future<void> upsertFlashSaleDraft({
     required String deviceId,
     required String note,
     required int countdownSec,
     required String productsJson,
     String? scheduleDaysCsv,
+    String? startDate,
+    String? endDate,
     String? startTime,
     String? endTime,
   }) async {
@@ -542,10 +588,16 @@ class ApiService {
       'products_json': productsJson,
     };
     final days = (scheduleDaysCsv ?? '').trim();
+    final sd = (startDate ?? '').trim();
+    final ed = (endDate ?? '').trim();
     final start = (startTime ?? '').trim();
     final end = (endTime ?? '').trim();
-    if (days.isNotEmpty && start.isNotEmpty && end.isNotEmpty) {
-      query['schedule_days'] = days;
+    if (start.isNotEmpty && end.isNotEmpty && (days.isNotEmpty || (sd.isNotEmpty && ed.isNotEmpty))) {
+      if (days.isNotEmpty) query['schedule_days'] = days;
+      if (sd.isNotEmpty && ed.isNotEmpty) {
+        query['start_date'] = sd;
+        query['end_date'] = ed;
+      }
       query['start_time'] = start;
       query['end_time'] = end;
     }
@@ -566,6 +618,18 @@ class ApiService {
     );
     if (res.statusCode != 200) {
       throw Exception('Disable flash sale failed: ${_formatHttpError(res)}');
+    }
+  }
+
+  Future<void> clearFlashSale(String deviceId) async {
+    final res = await _sendWithRetry(
+      () => http.delete(
+        _uri('/flash-sale/device/$deviceId/clear'),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Clear flash sale failed: ${_formatHttpError(res)}');
     }
   }
 

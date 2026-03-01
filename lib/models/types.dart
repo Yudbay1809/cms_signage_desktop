@@ -5,6 +5,7 @@ class DeviceInfo {
   final String status;
   final DateTime? lastSeen;
   final String? orientation;
+  final String mediaQualityTier;
   final bool mediaDownloadReady;
   final String mediaDownloadStatus;
   final String mediaDownloadStatusLabel;
@@ -31,6 +32,7 @@ class DeviceInfo {
     required this.status,
     this.lastSeen,
     this.orientation,
+    this.mediaQualityTier = 'normal',
     this.mediaDownloadReady = false,
     this.mediaDownloadStatus = 'not_reported',
     this.mediaDownloadStatusLabel = 'Belum Lapor',
@@ -61,6 +63,7 @@ class DeviceInfo {
           ? DateTime.tryParse(json['last_seen'])
           : null,
       orientation: json['orientation'],
+      mediaQualityTier: (json['media_quality_tier'] ?? 'normal').toString(),
       mediaDownloadReady: json['media_download_ready'] == true,
       mediaDownloadStatus: (json['media_download_status'] ?? 'not_reported')
           .toString(),

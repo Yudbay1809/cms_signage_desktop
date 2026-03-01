@@ -201,6 +201,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       TextEditingController(text: '09:00');
   final TextEditingController _flashSaleScheduleEndController =
       TextEditingController(text: '21:00');
+  final TextEditingController _flashSaleScheduleStartDateController =
+      TextEditingController();
+  final TextEditingController _flashSaleScheduleEndDateController =
+      TextEditingController();
   final TextEditingController _flashSaleCountdownController =
       TextEditingController(text: '600');
   final TextEditingController _flashSaleNoteController =
@@ -318,6 +322,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     _manageAddDurationController.dispose();
     _flashSaleScheduleStartController.dispose();
     _flashSaleScheduleEndController.dispose();
+    _flashSaleScheduleStartDateController.dispose();
+    _flashSaleScheduleEndDateController.dispose();
     _flashSaleCountdownController.dispose();
     _flashSaleNoteController.dispose();
     super.dispose();
@@ -930,12 +936,24 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
-  void _reorderManagedPlaylistItems(int oldIndex, int newIndex) {
+  void _moveManagedPlaylistItemByStep(int index, int step) {
+    final nextIndex = index + step;
+    if (index < 0 || index >= _managePlaylistItems.length) return;
+    if (nextIndex < 0 || nextIndex >= _managePlaylistItems.length) return;
     setState(() {
-      if (newIndex > oldIndex) newIndex -= 1;
-      final item = _managePlaylistItems.removeAt(oldIndex);
-      _managePlaylistItems.insert(newIndex, item);
+      final item = _managePlaylistItems.removeAt(index);
+      _managePlaylistItems.insert(nextIndex, item);
       _managePlaylistDirty = true;
+    });
+  }
+
+  void _moveSelectedPlaylistMediaByStep(int index, int step) {
+    final nextIndex = index + step;
+    if (index < 0 || index >= _selectedMediaIds.length) return;
+    if (nextIndex < 0 || nextIndex >= _selectedMediaIds.length) return;
+    setState(() {
+      final id = _selectedMediaIds.removeAt(index);
+      _selectedMediaIds.insert(nextIndex, id);
     });
   }
 
@@ -1871,6 +1889,35 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
   }
 
+  String _dateToYmd(DateTime value) {
+    final y = value.year.toString().padLeft(4, '0');
+    final m = value.month.toString().padLeft(2, '0');
+    final d = value.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
+  String _formatYmd(String input) {
+    final raw = input.trim();
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw);
+    if (match == null) return '';
+    final y = int.tryParse(match.group(1)!);
+    final m = int.tryParse(match.group(2)!);
+    final d = int.tryParse(match.group(3)!);
+    if (y == null || m == null || d == null) return '';
+    try {
+      return _dateToYmd(DateTime(y, m, d));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  DateTime? _dateFromYmd(String input) {
+    final normalized = _formatYmd(input);
+    if (normalized.isEmpty) return null;
+    final parts = normalized.split('-').map(int.parse).toList();
+    return DateTime(parts[0], parts[1], parts[2]);
+  }
+
   String _currentTimeHm({DateTime? at}) {
     final now = at ?? DateTime.now();
     return '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
@@ -2091,43 +2138,136 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
-  void _loadFlashSaleDraftForDevice(
-    String deviceId,
-    Map<String, dynamic> runtime,
-  ) {
-    final days = _parseScheduleDaysCsv(runtime['schedule_days']?.toString());
-    final start = _formatHm((runtime['schedule_start_time'] ?? '').toString());
-    final end = _formatHm((runtime['schedule_end_time'] ?? '').toString());
-    final note = (runtime['note'] ?? '').toString();
-    final countdown = (runtime['countdown_sec'] as num?)?.toInt();
-    final parsedProducts = _parseFlashSaleDraftProducts(
-      runtime['products_json']?.toString(),
-    );
-
-    setState(() {
-      _flashSaleDeviceIds
-        ..clear()
-        ..add(deviceId);
-      _flashSaleNoteController.text = note;
-      if (countdown != null && countdown > 0) {
-        _flashSaleCountdownController.text = countdown.toString();
+  Future<void> _loadFlashSaleDraftForDevice(
+    String deviceId, {
+    Map<String, dynamic>? runtimeFallback,
+  }) async {
+    if (_flashSaleBusy) return;
+    setState(() => _flashSaleBusy = true);
+    try {
+      Map<String, dynamic> runtime = runtimeFallback ?? const {};
+      try {
+        final fetched = await _api.fetchFlashSaleDeviceRaw(deviceId);
+        if (fetched != null) runtime = fetched;
+      } catch (_) {
+        // Keep fallback from runtime panel if endpoint fetch fails.
       }
-      _flashSaleScheduleDays
-        ..clear()
-        ..addAll(days);
-      _flashSaleScheduleStartController.text = start;
-      _flashSaleScheduleEndController.text = end;
-      if (parsedProducts.isNotEmpty) {
+
+      if (runtime.isEmpty) {
+        _showMessage('Belum ada data Flash Sale tersimpan di $deviceId');
+        return;
+      }
+
+      final note = (runtime['note'] ?? '').toString();
+      final countdown = (runtime['countdown_sec'] as num?)?.toInt();
+      final parsedProducts = _parseFlashSaleDraftProducts(
+        runtime['products_json']?.toString(),
+      );
+      final days = _parseScheduleDaysCsv(runtime['schedule_days']?.toString());
+      final startDate = _formatYmd(
+        (runtime['schedule_start_date'] ?? '').toString(),
+      );
+      final endDate = _formatYmd(
+        (runtime['schedule_end_date'] ?? '').toString(),
+      );
+      final start = _formatHm((runtime['schedule_start_time'] ?? '').toString());
+      final end = _formatHm((runtime['schedule_end_time'] ?? '').toString());
+      final hasMeaningfulData =
+          note.trim().isNotEmpty ||
+          (countdown != null && countdown > 0) ||
+          parsedProducts.isNotEmpty ||
+          days.isNotEmpty ||
+          startDate.isNotEmpty ||
+          endDate.isNotEmpty ||
+          start.isNotEmpty ||
+          end.isNotEmpty;
+
+      if (!hasMeaningfulData) {
+        _showMessage('Data Flash Sale di $deviceId kosong. Silakan isi baru.');
+        return;
+      }
+
+      final seedProducts = parsedProducts.isNotEmpty
+          ? parsedProducts
+          : const [
+              _FlashSaleProductDraft(
+                name: '',
+                brand: '',
+                normalPrice: '',
+                promoPrice: '',
+                stock: '',
+                mediaId: '',
+              ),
+            ];
+
+      setState(() {
+        _flashSaleDeviceIds
+          ..clear()
+          ..add(deviceId);
+        _flashSaleNoteController.text = note;
+        _flashSaleCountdownController.text =
+            (countdown != null && countdown > 0) ? countdown.toString() : '';
+        _flashSaleScheduleDays
+          ..clear()
+          ..addAll(days);
+        _flashSaleScheduleStartDateController.text = startDate;
+        _flashSaleScheduleEndDateController.text = endDate;
+        _flashSaleScheduleStartController.text = start;
+        _flashSaleScheduleEndController.text = end;
         _flashSaleProducts
           ..clear()
-          ..addAll(parsedProducts);
-      }
-      _resetFlashSaleMediaCheckStatus();
-    });
+          ..addAll(seedProducts);
+        _resetFlashSaleMediaCheckStatus();
+      });
 
-    _showMessage(
-      'Draft $deviceId dimuat. Edit field lalu klik "Simpan Draft".',
+      _showMessage(
+        'Data Flash Sale $deviceId dimuat. Anda bisa edit media/hari/jam lalu simpan.',
+      );
+    } finally {
+      if (mounted) setState(() => _flashSaleBusy = false);
+    }
+  }
+
+  Future<void> _deleteFlashSaleForDevice(String deviceId) async {
+    if (_flashSaleBusy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Hapus Flash Sale'),
+          content: Text(
+            'Hapus konfigurasi Flash Sale pada $deviceId?\nTindakan ini menonaktifkan runtime dan mengosongkan draft device ini.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Hapus'),
+            ),
+          ],
+        );
+      },
     );
+    if (confirmed != true) return;
+
+    setState(() => _flashSaleBusy = true);
+    try {
+      await _api.clearFlashSale(deviceId);
+      _showMessage('Flash Sale pada $deviceId berhasil dihapus');
+      await _loadFlashSaleRuntimeStatus();
+      await _refreshNowPlayingForSelectedDevices();
+    } catch (e) {
+      _showMessage('Gagal hapus Flash Sale $deviceId: $e');
+    } finally {
+      if (mounted) setState(() => _flashSaleBusy = false);
+    }
   }
 
   static const Map<int, String> _scheduleDayLabelsShort = {
@@ -2770,6 +2910,12 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       6: 'Min',
     };
     final selectedDays = <int>{..._flashSaleScheduleDays};
+    final startDateController = TextEditingController(
+      text: _formatYmd(_flashSaleScheduleStartDateController.text),
+    );
+    final endDateController = TextEditingController(
+      text: _formatYmd(_flashSaleScheduleEndDateController.text),
+    );
     final startController = TextEditingController(
       text: _formatHm(_flashSaleScheduleStartController.text),
     );
@@ -2879,7 +3025,117 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         }).toList(),
                       ),
                       const SizedBox(height: 10),
-                      const Text('2) Pilih Jam (HH:MM)'),
+                      const Text(
+                        '2) Opsional: Atur Rentang Tanggal (tidak berulang)',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ActionChip(
+                            label: const Text('Hari Ini'),
+                            onPressed: () {
+                              final now = DateTime.now();
+                              setLocalState(() {
+                                startDateController.text = _dateToYmd(now);
+                                endDateController.text = _dateToYmd(now);
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('7 Hari'),
+                            onPressed: () {
+                              final now = DateTime.now();
+                              setLocalState(() {
+                                startDateController.text = _dateToYmd(now);
+                                endDateController.text = _dateToYmd(
+                                  now.add(const Duration(days: 6)),
+                                );
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('30 Hari'),
+                            onPressed: () {
+                              final now = DateTime.now();
+                              setLocalState(() {
+                                startDateController.text = _dateToYmd(now);
+                                endDateController.text = _dateToYmd(
+                                  now.add(const Duration(days: 29)),
+                                );
+                              });
+                            },
+                          ),
+                          ActionChip(
+                            label: const Text('Kosongkan Tanggal'),
+                            onPressed: () {
+                              setLocalState(() {
+                                startDateController.clear();
+                                endDateController.clear();
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: startDateController,
+                        readOnly: true,
+                        decoration: InputDecoration(
+                          labelText: 'Tanggal mulai (YYYY-MM-DD)',
+                          suffixIcon: IconButton(
+                            tooltip: 'Pilih tanggal mulai',
+                            icon: const Icon(Icons.event),
+                            onPressed: () async {
+                              final initial =
+                                  _dateFromYmd(startDateController.text) ??
+                                  DateTime.now();
+                              final picked = await showDatePicker(
+                                context: ctx,
+                                initialDate: initial,
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime(2100),
+                              );
+                              if (picked == null) return;
+                              setLocalState(() {
+                                startDateController.text = _dateToYmd(picked);
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: endDateController,
+                        readOnly: true,
+                        decoration: InputDecoration(
+                          labelText: 'Tanggal selesai (YYYY-MM-DD)',
+                          suffixIcon: IconButton(
+                            tooltip: 'Pilih tanggal selesai',
+                            icon: const Icon(Icons.event_available),
+                            onPressed: () async {
+                              final initial =
+                                  _dateFromYmd(endDateController.text) ??
+                                  _dateFromYmd(startDateController.text) ??
+                                  DateTime.now();
+                              final picked = await showDatePicker(
+                                context: ctx,
+                                initialDate: initial,
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime(2100),
+                              );
+                              if (picked == null) return;
+                              setLocalState(() {
+                                endDateController.text = _dateToYmd(picked);
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text('3) Pilih Jam (HH:MM)'),
                       const SizedBox(height: 6),
                       Wrap(
                         spacing: 8,
@@ -3042,22 +3298,35 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     );
     if (confirmed != true) return;
 
+    final startDate = _formatYmd(startDateController.text);
+    final endDate = _formatYmd(endDateController.text);
     final startHm = _formatHm(startController.text);
     final endHm = _formatHm(endController.text);
+    _flashSaleScheduleStartDateController.text = startDate;
+    _flashSaleScheduleEndDateController.text = endDate;
     _flashSaleScheduleStartController.text = startHm;
     _flashSaleScheduleEndController.text = endHm;
     _flashSaleScheduleDays
       ..clear()
       ..addAll(selectedDays);
 
+    final hasDateRange = startDate.isNotEmpty || endDate.isNotEmpty;
+    if (hasDateRange && (startDate.isEmpty || endDate.isEmpty)) {
+      _showMessage('Jika pakai tanggal, isi tanggal mulai dan tanggal selesai');
+      return;
+    }
+    if (hasDateRange && endDate.compareTo(startDate) < 0) {
+      _showMessage('Tanggal selesai harus sama/lebih besar dari tanggal mulai');
+      return;
+    }
     final startTime = _hmToHms(_flashSaleScheduleStartController.text);
     final endTime = _hmToHms(_flashSaleScheduleEndController.text);
     if (startTime.isEmpty || endTime.isEmpty) {
       _showMessage('Format waktu harus HH:MM');
       return;
     }
-    if (_flashSaleScheduleDays.isEmpty) {
-      _showMessage('Pilih minimal satu hari jadwal');
+    if (_flashSaleScheduleDays.isEmpty && !hasDateRange) {
+      _showMessage('Pilih minimal satu hari, atau isi rentang tanggal');
       return;
     }
 
@@ -3076,6 +3345,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             countdownSec: countdownSec,
             productsJson: productsJson,
             scheduleDaysCsv: daysCsv.join(','),
+            startDate: hasDateRange ? startDate : null,
+            endDate: hasDateRange ? endDate : null,
             startTime: startTime,
             endTime: endTime,
           );
@@ -3138,18 +3409,35 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       return;
     }
 
+    final startDate = _formatYmd(_flashSaleScheduleStartDateController.text);
+    final endDate = _formatYmd(_flashSaleScheduleEndDateController.text);
     final hasAnySchedule =
         _flashSaleScheduleDays.isNotEmpty ||
+        startDate.isNotEmpty ||
+        endDate.isNotEmpty ||
         _flashSaleScheduleStartController.text.trim().isNotEmpty ||
         _flashSaleScheduleEndController.text.trim().isNotEmpty;
     final startTime = _hmToHms(_flashSaleScheduleStartController.text);
     final endTime = _hmToHms(_flashSaleScheduleEndController.text);
+    final hasDateRange = startDate.isNotEmpty || endDate.isNotEmpty;
+    if (hasDateRange && (startDate.isEmpty || endDate.isEmpty)) {
+      _showMessage(
+        'Jika pakai tanggal pada draft, isi tanggal mulai dan tanggal selesai',
+      );
+      return;
+    }
+    if (hasDateRange && endDate.compareTo(startDate) < 0) {
+      _showMessage('Tanggal selesai harus sama/lebih besar dari tanggal mulai');
+      return;
+    }
     if (hasAnySchedule) {
-      if (_flashSaleScheduleDays.isEmpty ||
-          startTime.isEmpty ||
-          endTime.isEmpty) {
+      if (startTime.isEmpty || endTime.isEmpty) {
+        _showMessage('Jika isi jadwal draft, jam mulai + jam selesai wajib');
+        return;
+      }
+      if (_flashSaleScheduleDays.isEmpty && !hasDateRange) {
         _showMessage(
-          'Jika isi jadwal draft, hari + jam mulai + jam selesai wajib lengkap',
+          'Jika isi jadwal draft, pilih hari atau isi rentang tanggal',
         );
         return;
       }
@@ -3170,6 +3458,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             countdownSec: countdownSec,
             productsJson: productsJson,
             scheduleDaysCsv: hasAnySchedule ? daysCsv.join(',') : null,
+            startDate: hasAnySchedule && hasDateRange ? startDate : null,
+            endDate: hasAnySchedule && hasDateRange ? endDate : null,
             startTime: hasAnySchedule ? startTime : null,
             endTime: hasAnySchedule ? endTime : null,
           );
@@ -4174,6 +4464,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
+  Future<void> _setDeviceMediaQualityTier(
+    DeviceInfo device,
+    String mediaQualityTier,
+  ) async {
+    try {
+      await _api.updateDeviceMediaQualityTier(device.id, mediaQualityTier);
+      _showMessage('Tier media ${device.name} diubah ke ${mediaQualityTier.toUpperCase()}');
+      await _refresh();
+    } catch (e) {
+      _showMessage(e.toString());
+    }
+  }
+
   Future<void> _deleteDevice(DeviceInfo device) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -5113,52 +5416,118 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   Widget _playlistMediaSelectionList() {
-    return Builder(
-      builder: (context) {
-        final filteredMedia = _filteredMediaForPlaylist();
-        if (filteredMedia.isEmpty) {
-          return const Center(
-            child: Text('Media tidak ditemukan untuk filter ini'),
-          );
-        }
-        return ListView.builder(
+    final filteredMedia = _filteredMediaForPlaylist();
+    if (filteredMedia.isEmpty) {
+      return const Center(child: Text('Media tidak ditemukan untuk filter ini'));
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final crossAxisCount = math.max(2, (width / 220).floor());
+        return GridView.builder(
           itemCount: filteredMedia.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 0.9,
+          ),
           itemBuilder: (context, i) {
             final m = filteredMedia[i];
             final selected = _selectedMediaIds.contains(m.id);
-            return Row(
-              children: [
-                Expanded(
-                  child: CheckboxListTile(
-                    value: selected,
-                    title: Text(m.name),
-                    subtitle: Text(m.type),
-                    onChanged: (value) {
-                      setState(() {
-                        if (value == true) {
-                          _selectedMediaIds.add(m.id);
-                          _mediaDurations[m.id] =
-                              _mediaDurations[m.id] ?? _durationSec;
-                        } else {
-                          _selectedMediaIds.remove(m.id);
-                          _mediaDurations.remove(m.id);
-                        }
-                      });
-                    },
+            final currentDuration = _mediaDurations[m.id] ?? _durationSec;
+            return InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                setState(() {
+                  if (selected) {
+                    _selectedMediaIds.remove(m.id);
+                    _mediaDurations.remove(m.id);
+                  } else {
+                    _selectedMediaIds.add(m.id);
+                    _mediaDurations[m.id] = currentDuration;
+                  }
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: selected
+                        ? const Color(0xFF0EA5E9)
+                        : const Color(0xFFE2E8F0),
+                    width: selected ? 1.6 : 1,
                   ),
                 ),
-                SizedBox(
-                  width: 100,
-                  child: TextField(
-                    decoration: const InputDecoration(labelText: 'Durasi'),
-                    keyboardType: TextInputType.number,
-                    onChanged: (v) {
-                      final val = int.tryParse(v) ?? _durationSec;
-                      _mediaDurations[m.id] = val;
-                    },
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            m.type,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Checkbox(
+                          value: selected,
+                          onChanged: (value) {
+                            setState(() {
+                              if (value == true) {
+                                _selectedMediaIds.add(m.id);
+                                _mediaDurations[m.id] = currentDuration;
+                              } else {
+                                _selectedMediaIds.remove(m.id);
+                                _mediaDurations.remove(m.id);
+                              }
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Center(
+                      child: _mediaThumbnail(
+                        m,
+                        size: 88,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      m.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 44,
+                      child: TextField(
+                        controller: TextEditingController(
+                          text: currentDuration.toString(),
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Durasi (detik)',
+                          isDense: true,
+                        ),
+                        keyboardType: TextInputType.number,
+                        onChanged: (v) {
+                          final val = int.tryParse(v) ?? _durationSec;
+                          _mediaDurations[m.id] = val;
+                        },
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             );
           },
         );
@@ -5167,23 +5536,116 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   Widget _playlistSelectedReorderList() {
-    return ReorderableListView(
-      onReorder: (oldIndex, newIndex) {
-        setState(() {
-          if (newIndex > oldIndex) newIndex -= 1;
-          final id = _selectedMediaIds.removeAt(oldIndex);
-          _selectedMediaIds.insert(newIndex, id);
-        });
-      },
-      children: [
-        for (final id in _selectedMediaIds)
-          ListTile(
-            key: ValueKey(id),
-            title: Text(_media.firstWhere((m) => m.id == id).name),
-            subtitle: Text('Durasi: ${_mediaDurations[id] ?? _durationSec}s'),
-            trailing: const Icon(Icons.drag_handle),
+    if (_selectedMediaIds.isEmpty) {
+      return const Center(child: Text('Belum ada media dipilih'));
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final crossAxisCount = math.max(2, (width / 220).floor());
+        return GridView.builder(
+          itemCount: _selectedMediaIds.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 0.9,
           ),
-      ],
+          itemBuilder: (context, i) {
+            final id = _selectedMediaIds[i];
+            final media = _media.firstWhere(
+              (m) => m.id == id,
+              orElse: () => MediaInfo(
+                id: id,
+                name: id,
+                type: '',
+                path: '',
+                durationSec: _durationSec,
+              ),
+            );
+            final currentDuration = _mediaDurations[id] ?? _durationSec;
+            return Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE0F2FE),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '#${i + 1}',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: 'Naik',
+                        onPressed: i == 0
+                            ? null
+                            : () => _moveSelectedPlaylistMediaByStep(i, -1),
+                        icon: const Icon(Icons.keyboard_arrow_up),
+                      ),
+                      IconButton(
+                        tooltip: 'Turun',
+                        onPressed: i == _selectedMediaIds.length - 1
+                            ? null
+                            : () => _moveSelectedPlaylistMediaByStep(i, 1),
+                        icon: const Icon(Icons.keyboard_arrow_down),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Center(
+                    child: _mediaThumbnail(
+                      media,
+                      size: 88,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    media.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 44,
+                    child: TextField(
+                      controller: TextEditingController(
+                        text: currentDuration.toString(),
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Durasi (detik)',
+                        isDense: true,
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (v) {
+                        final val = int.tryParse(v) ?? _durationSec;
+                        _mediaDurations[id] = val;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -5326,43 +5788,127 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             )
           else
             Expanded(
-              child: ReorderableListView.builder(
-                onReorder: _reorderManagedPlaylistItems,
-                itemCount: _managePlaylistItems.length,
-                buildDefaultDragHandles: false,
-                itemBuilder: (context, i) {
-                  final item = _managePlaylistItems[i];
-                  final checked = _manageSelectedItemIds.contains(item.itemId);
-                  return Container(
-                    key: ValueKey(item.itemId),
-                    margin: const EdgeInsets.only(bottom: 6),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                      borderRadius: BorderRadius.circular(10),
-                      color: Colors.white,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = constraints.maxWidth;
+                  final crossAxisCount = math.max(2, (width / 220).floor());
+                  return GridView.builder(
+                    itemCount: _managePlaylistItems.length,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossAxisCount,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: 0.9,
                     ),
-                    child: ListTile(
-                      leading: Checkbox(
-                        value: checked,
-                        onChanged: (value) {
-                          setState(() {
-                            if (value == true) {
-                              _manageSelectedItemIds.add(item.itemId);
-                            } else {
-                              _manageSelectedItemIds.remove(item.itemId);
-                            }
-                          });
-                        },
-                      ),
-                      title: Text('${i + 1}. ${item.mediaName}'),
-                      subtitle: Text(
-                        '${item.mediaType} | durasi: ${item.durationSec ?? '-'}',
-                      ),
-                      trailing: ReorderableDragStartListener(
-                        index: i,
-                        child: const Icon(Icons.drag_handle),
-                      ),
-                    ),
+                    itemBuilder: (context, i) {
+                      final item = _managePlaylistItems[i];
+                      final checked = _manageSelectedItemIds.contains(
+                        item.itemId,
+                      );
+                      final media = _media.firstWhere(
+                        (m) => m.id == item.mediaId,
+                        orElse: () => MediaInfo(
+                          id: item.mediaId,
+                          name: item.mediaName,
+                          type: item.mediaType,
+                          path: '',
+                          durationSec: item.durationSec ?? _durationSec,
+                        ),
+                      );
+                      return Container(
+                        key: ValueKey(item.itemId),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE0F2FE),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    '#${i + 1}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const Spacer(),
+                                Checkbox(
+                                  value: checked,
+                                  onChanged: (value) {
+                                    setState(() {
+                                      if (value == true) {
+                                        _manageSelectedItemIds.add(item.itemId);
+                                      } else {
+                                        _manageSelectedItemIds.remove(
+                                          item.itemId,
+                                        );
+                                      }
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Center(
+                              child: _mediaThumbnail(
+                                media,
+                                size: 88,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              item.mediaName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${item.mediaType} | durasi: ${item.durationSec ?? '-'}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Color(0xFF64748B)),
+                            ),
+                            const Spacer(),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Naik',
+                                  onPressed: i == 0
+                                      ? null
+                                      : () =>
+                                            _moveManagedPlaylistItemByStep(i, -1),
+                                  icon: const Icon(Icons.keyboard_arrow_up),
+                                ),
+                                IconButton(
+                                  tooltip: 'Turun',
+                                  onPressed: i == _managePlaylistItems.length - 1
+                                      ? null
+                                      : () =>
+                                            _moveManagedPlaylistItemByStep(i, 1),
+                                  icon: const Icon(Icons.keyboard_arrow_down),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   );
                 },
               ),
@@ -5545,6 +6091,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   ],
                 ),
                 const SizedBox(height: 6),
+                Text(
+                  'Tanggal: ${_formatYmd(_flashSaleScheduleStartDateController.text).isEmpty ? '-' : _formatYmd(_flashSaleScheduleStartDateController.text)} - ${_formatYmd(_flashSaleScheduleEndDateController.text).isEmpty ? '-' : _formatYmd(_flashSaleScheduleEndDateController.text)}',
+                ),
+                const SizedBox(height: 2),
                 Text(
                   'Jam: ${_formatHm(_flashSaleScheduleStartController.text).isEmpty ? '-' : _formatHm(_flashSaleScheduleStartController.text)} - ${_formatHm(_flashSaleScheduleEndController.text).isEmpty ? '-' : _formatHm(_flashSaleScheduleEndController.text)}',
                 ),
@@ -5975,6 +6525,15 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     final days = _formatScheduleDaysLabel(
                       flash['schedule_days']?.toString(),
                     );
+                    final startDate = _formatYmd(
+                      (flash['schedule_start_date'] ?? '').toString(),
+                    );
+                    final endDate = _formatYmd(
+                      (flash['schedule_end_date'] ?? '').toString(),
+                    );
+                    final dateRange = (startDate.isNotEmpty && endDate.isNotEmpty)
+                        ? '$startDate - $endDate'
+                        : '-';
                     final start = (flash['schedule_start_time'] ?? '-')
                         .toString();
                     final end = (flash['schedule_end_time'] ?? '-').toString();
@@ -5988,7 +6547,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                         children: [
                           Expanded(
                             child: Text(
-                              '$name: [$active] hari=$days | jam=$start - $end',
+                              '$name: [$active] hari=$days | tanggal=$dateRange | jam=$start - $end',
                               style: TextStyle(
                                 color: isDraft
                                     ? const Color(0xFF92400E)
@@ -6001,9 +6560,24 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                           ),
                           const SizedBox(width: 8),
                           OutlinedButton(
-                            onPressed: () =>
-                                _loadFlashSaleDraftForDevice(deviceId, flash),
-                            child: const Text('Muat Draft'),
+                            onPressed: _flashSaleBusy
+                                ? null
+                                : () => _loadFlashSaleDraftForDevice(
+                                      deviceId,
+                                      runtimeFallback: flash,
+                                    ),
+                            child: const Text('Muat & Edit'),
+                          ),
+                          const SizedBox(width: 6),
+                          OutlinedButton.icon(
+                            onPressed: _flashSaleBusy
+                                ? null
+                                : () => _deleteFlashSaleForDevice(deviceId),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Hapus'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFB91C1C),
+                            ),
                           ),
                         ],
                       ),
@@ -6907,6 +7481,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     .toString();
                 final queueProgress = (syncStatus['progress_percent'] as num?)
                     ?.toInt();
+                final deviceTier = switch (d.mediaQualityTier.trim().toLowerCase()) {
+                  'low' => 'low',
+                  'high' => 'high',
+                  _ => 'normal',
+                };
                 return CheckboxListTile(
                   value: selected,
                   title: Row(
@@ -6995,6 +7574,38 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                           ),
                         ),
                       if (queueStatus.isNotEmpty) const SizedBox(width: 6),
+                      SizedBox(
+                        width: 110,
+                        child: DropdownButtonFormField<String>(
+                          key: ValueKey('${d.id}-$deviceTier'),
+                          initialValue: deviceTier,
+                          isDense: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Tier',
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'low', child: Text('LOW')),
+                            DropdownMenuItem(
+                              value: 'normal',
+                              child: Text('NORMAL'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'high',
+                              child: Text('HIGH'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value == null || value == deviceTier) return;
+                            _setDeviceMediaQualityTier(d, value);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 6),
                       IconButton(
                         tooltip: d.mediaDownloadReady
                             ? 'Media sudah lengkap'
@@ -7023,7 +7634,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     ],
                   ),
                   subtitle: Text(
-                    '${d.id} | $orientation | tier low/normal/high: ${d.mediaTierLowReadyCount}/${d.mediaTierNormalReadyCount}/${d.mediaTierHighReadyCount} dari ${d.mediaTierRequiredCount} | cache: ${d.mediaCachedCount}/${d.mediaRequiredCount} | missing: ${d.mediaMissingCount} | last: ${lastSeen ?? '-'}',
+                    '${d.id} | $orientation | target tier: ${deviceTier.toUpperCase()} | tier low/normal/high: ${d.mediaTierLowReadyCount}/${d.mediaTierNormalReadyCount}/${d.mediaTierHighReadyCount} dari ${d.mediaTierRequiredCount} | cache: ${d.mediaCachedCount}/${d.mediaRequiredCount} | missing: ${d.mediaMissingCount} | last: ${lastSeen ?? '-'}',
                   ),
                   secondary: PopupMenuButton<String>(
                     tooltip: 'Set orientation',

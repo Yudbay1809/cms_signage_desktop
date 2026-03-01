@@ -13,6 +13,15 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - Recommended production setup uses static backend base URL on LAN.
 
 ## Latest Updates (2026-02-17)
+- Flash Sale scheduler now supports optional date range (`Tanggal mulai` - `Tanggal selesai`) for non-recurring campaigns.
+  - If date range is set, campaign will only run inside that period.
+  - If date range is empty, recurring day-based schedule remains available.
+- Runtime panel now provides per-device actions:
+  - `Muat & Edit` to load latest stored Flash Sale config into form.
+  - `Hapus` to hard delete Flash Sale draft/runtime on selected device.
+- Flash Sale delete semantics:
+  - `Nonaktifkan Flash Sale` = disable runtime only.
+  - `Hapus` (runtime panel) = clear saved draft/runtime data from backend.
 - Flash Sale scheduler UX simplified:
   - time input now focused on `HH:MM`
   - quick presets + time picker
@@ -71,9 +80,10 @@ Output:
 ## Flash Sale Workflow
 1. Open `Flash Sale` tab.
 2. Fill `Note`, `Countdown`, and product rows (`name/brand/price/stock/media`).
-3. Select target devices.
-4. Use `Tayangkan Sekarang` or `Jadwalkan Flashsale`.
-5. Optional: use `Cek Sinkron Media Device` before publish.
+3. Optional: set `Tanggal mulai` and `Tanggal selesai` to limit campaign window.
+4. Select target devices.
+5. Use `Tayangkan Sekarang` or `Jadwalkan Flashsale`.
+6. Optional: use `Cek Sinkron Media Device` before publish.
 
 ## Final Smoke Checklist
 1. Connect to backend and ensure device list loads.

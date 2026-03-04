@@ -181,6 +181,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   List<DeviceInfo> _devices = [];
   List<MediaInfo> _media = [];
   List<PlaylistInfo> _playlists = [];
+  List<PlaylistInfo> _managePlaylists = [];
   List<_PlaylistTemplate> _playlistLibrary = [];
   List<_GridPreviewItem> _gridTargetPreviewItems = [];
   final Map<String, String> _deviceNowPlayingName = {};
@@ -614,6 +615,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           (key, _) => !availableMediaIds.contains(key),
         );
       });
+      await _loadManagePlaylistsGlobal(silent: true);
       if (deep) {
         // Prevent snackbar flicker on refresh; keep errors in inline header.
         await _loadScreens(silent: true);
@@ -785,6 +787,19 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               ? playlists.first.id
               : null;
         }
+      });
+    } catch (e) {
+      if (!silent) {
+        _showMessage(e.toString());
+      }
+    }
+  }
+
+  Future<void> _loadManagePlaylistsGlobal({bool silent = false}) async {
+    try {
+      final playlists = await _api.listAllPlaylists();
+      setState(() {
+        _managePlaylists = playlists;
         final hasManageSelected =
             _managePlaylistId != null &&
             playlists.any((p) => p.id == _managePlaylistId);
@@ -793,9 +808,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         }
       });
     } catch (e) {
-      if (!silent) {
-        _showMessage(e.toString());
-      }
+      if (!silent) _showMessage(e.toString());
     }
   }
 
@@ -822,7 +835,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       final itemsRaw = await _api.listPlaylistItems(playlistId);
 
       var playlistName = playlistId;
-      for (final item in _playlists) {
+      for (final item in _managePlaylists) {
         if (item.id == playlistId) {
           playlistName = item.name;
           break;
@@ -995,6 +1008,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     try {
       await _api.updatePlaylistName(playlistId, nextName);
       _showMessage('Nama playlist diperbarui');
+      await _loadManagePlaylistsGlobal(silent: true);
       await _loadPlaylistLibrary();
       await _loadManagePlaylistData();
     } catch (e) {
@@ -1051,6 +1065,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         _managePlaylistDirty = false;
       });
       await _loadPlaylists();
+      await _loadManagePlaylistsGlobal(silent: true);
       await _loadPlaylistLibrary();
       await _loadManagePlaylistData();
       await _refreshNowPlayingForSelectedDevices();
@@ -3617,6 +3632,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         _managePlaylistId = playlist.id;
       });
       await _loadPlaylists();
+      await _loadManagePlaylistsGlobal(silent: true);
       await _loadPlaylistLibrary();
       await _loadManagePlaylistData();
       _tabController.animateTo(2);
@@ -3795,9 +3811,20 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     return '$baseName - $sourceLabel$nowTag';
   }
 
+  String _managePlaylistDropdownLabel(PlaylistInfo playlist) {
+    final name = playlist.name.trim().isEmpty ? playlist.id : playlist.name.trim();
+    final device = (playlist.deviceName ?? playlist.deviceId ?? '').trim();
+    final screen = (playlist.screenName ?? playlist.screenId ?? '').trim();
+    if (device.isEmpty && screen.isEmpty) return name;
+    if (device.isEmpty) return '$name ($screen)';
+    if (screen.isEmpty) return '$name ($device)';
+    return '$name ($device / $screen)';
+  }
+
   List<String> _bulkPlaylistNameOptions() {
     final names = <String>{};
     for (final playlist in _playlistLibrary) {
+      if (playlist.isFlashSale) continue;
       final value = playlist.name.trim();
       if (value.isNotEmpty) names.add(value);
     }
@@ -3818,11 +3845,22 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
 
     _PlaylistTemplate? sourceTemplate;
+    _PlaylistTemplate? flashTemplateWithSameName;
     for (final item in _playlistLibrary) {
       if (_normalizedText(item.name) == _normalizedText(playlistName)) {
+        if (item.isFlashSale) {
+          flashTemplateWithSameName ??= item;
+          continue;
+        }
         sourceTemplate = item;
         break;
       }
+    }
+    if (sourceTemplate == null && flashTemplateWithSameName != null) {
+      _showMessage(
+        'Playlist "$playlistName" terdeteksi sebagai playlist Flash Sale. Gunakan menu Flash Sale untuk tayang campaign.',
+      );
+      return;
     }
     if (sourceTemplate == null) {
       _showMessage('Playlist sumber tidak ditemukan');
@@ -5670,7 +5708,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
           ),
           const SizedBox(height: 10),
           const Text(
-            'Kelola playlist dari screen aktif',
+            'Kelola playlist global (semua device/screen)',
             style: TextStyle(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
@@ -5679,14 +5717,16 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               Expanded(
                 child: DropdownButton<String>(
                   isExpanded: true,
-                  value: _playlists.any((p) => p.id == _managePlaylistId)
+                  value: _managePlaylists.any((p) => p.id == _managePlaylistId)
                       ? _managePlaylistId
                       : null,
                   hint: const Text('Pilih playlist'),
-                  items: _playlists
+                  items: _managePlaylists
                       .map(
-                        (p) =>
-                            DropdownMenuItem(value: p.id, child: Text(p.name)),
+                        (p) => DropdownMenuItem(
+                          value: p.id,
+                          child: Text(_managePlaylistDropdownLabel(p)),
+                        ),
                       )
                       .toList(),
                   onChanged: (value) {
@@ -5699,7 +5739,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               ElevatedButton(
                 onPressed: _managePlaylistId == null
                     ? null
-                    : _loadManagePlaylistData,
+                    : () async {
+                        await _loadManagePlaylistsGlobal(silent: true);
+                        await _loadManagePlaylistData();
+                      },
                 child: const Text('Refresh'),
               ),
             ],

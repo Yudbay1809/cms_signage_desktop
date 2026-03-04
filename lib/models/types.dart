@@ -155,12 +155,32 @@ class PlaylistInfo {
   final String id;
   final String name;
   final bool isFlashSale;
+  final String? screenId;
+  final String? screenName;
+  final String? deviceId;
+  final String? deviceName;
 
   PlaylistInfo({
     required this.id,
     required this.name,
     this.isFlashSale = false,
+    this.screenId,
+    this.screenName,
+    this.deviceId,
+    this.deviceName,
   });
+
+  factory PlaylistInfo.fromJson(Map<String, dynamic> json) {
+    return PlaylistInfo(
+      id: '${json['id']}',
+      name: (json['name'] ?? '').toString(),
+      isFlashSale: json['is_flash_sale'] == true,
+      screenId: json['screen_id']?.toString(),
+      screenName: json['screen_name']?.toString(),
+      deviceId: json['device_id']?.toString(),
+      deviceName: json['device_name']?.toString(),
+    );
+  }
 }
 
 class PlaylistItemInfo {

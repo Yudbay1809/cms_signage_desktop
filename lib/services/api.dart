@@ -274,13 +274,23 @@ class ApiService {
     }
     final data = jsonDecode(res.body) as List<dynamic>;
     return data
-        .map(
-          (e) => PlaylistInfo(
-            id: e['id'],
-            name: e['name'] ?? '',
-            isFlashSale: e['is_flash_sale'] == true,
-          ),
-        )
+        .map((e) => PlaylistInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<PlaylistInfo>> listAllPlaylists() async {
+    final res = await _sendWithRetry(
+      () => http.get(
+        _uri('/playlists', {'include_all': 'true'}),
+        headers: _headers(),
+      ),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Failed to list all playlists: ${_formatHttpError(res)}');
+    }
+    final data = jsonDecode(res.body) as List<dynamic>;
+    return data
+        .map((e) => PlaylistInfo.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 

@@ -13,6 +13,12 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - Recommended production setup uses static backend base URL on LAN.
 
 ## Latest Updates (2026-02-17)
+- `Kelola Playlist` is now global:
+  - playlist list can be opened without selecting device first.
+  - dropdown includes source context (`device/screen`) to avoid ambiguity.
+- `Apply ke semua device terpilih` now ignores Flash Sale playlist templates:
+  - prevents accidental Flash Sale UI trigger when applying regular playlists.
+  - if selected name is Flash Sale-only, CMS shows warning and blocks mass-apply.
 - Flash Sale scheduler now supports optional date range (`Tanggal mulai` - `Tanggal selesai`) for non-recurring campaigns.
   - If date range is set, campaign will only run inside that period.
   - If date range is empty, recurring day-based schedule remains available.

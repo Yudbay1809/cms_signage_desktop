@@ -277,10 +277,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   bool _mediaPageLoading = false;
   String _mediaServerQuery = '';
   String _mediaServerType = 'all';
-  String _lastSnackMessage = '';
-  DateTime? _lastSnackAt;
-  DateTime _suppressMessageUntil = DateTime.now();
   bool _showSnackbarNotifications = false;
+  bool _safeMode = true;
+  bool _deviceHealthBusy = false;
+  DateTime? _deviceHealthCheckedAt;
+  final Map<String, Map<String, dynamic>> _deviceHealthByDevice = {};
   String _lastNoticeMessage = '';
   DateTime? _lastNoticeAt;
   _NoticeTone _lastNoticeTone = _NoticeTone.info;
@@ -302,7 +303,6 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   void initState() {
     super.initState();
     _tabController = TabController(length: 7, vsync: this);
-    _suppressMessageUntil = DateTime.now().add(const Duration(seconds: 20));
     _initializeAndRefresh();
   }
 
@@ -346,6 +346,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   void _scheduleRealtimeReconnect() {
+    if (_safeMode) return;
     _realtimeReconnectTimer?.cancel();
     _realtimeReconnectTimer = Timer(
       const Duration(seconds: 5),
@@ -354,6 +355,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   void _queueRealtimeRefresh() {
+    if (_safeMode) return;
     if (!_enableRealtimeAutoRefresh) return;
     if (_refreshing) return;
     final now = DateTime.now();
@@ -369,6 +371,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   }
 
   Future<void> _connectRealtime() async {
+    if (_safeMode) {
+      _closeRealtimeSocket();
+      return;
+    }
     if (!_enableRealtimeAutoRefresh) {
       _closeRealtimeSocket();
       return;
@@ -1233,6 +1239,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     if (!mounted) return;
     final message = msg.trim();
     if (message.isEmpty) return;
+    if (!force && _safeMode) return;
     final tone = _noticeToneFromMessage(message);
     setState(() {
       _lastNoticeMessage = message;
@@ -2623,7 +2630,7 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               _flashSaleLastDownloadSuccess = true;
             });
             _showMessage(
-              'Media Flash Sale siap (${requiredCount} media, ${targetCount} device) dalam ${_formatDurationShort(elapsed)}',
+              'Media Flash Sale siap ($requiredCount media, $targetCount device) dalam ${_formatDurationShort(elapsed)}',
             );
             return true;
           }
@@ -2863,6 +2870,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Pilih minimal satu device untuk Flash Sale');
       return;
     }
+    final ok = await _confirmApplyWithCacheGuard(
+      targetDeviceIds,
+      'Flash Sale Now',
+    );
+    if (!ok) return;
     final mediaReady = await _downloadFlashSaleMediaUntilReady();
     if (!mediaReady) return;
     final syncReady = await _ensureFlashSaleSyncGateReady();
@@ -2910,10 +2922,16 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Pilih minimal satu device untuk Flash Sale');
       return;
     }
+    final ok = await _confirmApplyWithCacheGuard(
+      targetDeviceIds,
+      'Jadwalkan Flash Sale',
+    );
+    if (!ok) return;
     final mediaReady = await _downloadFlashSaleMediaUntilReady();
     if (!mediaReady) return;
     final syncReady = await _ensureFlashSaleSyncGateReady();
     if (!syncReady) return;
+    if (!mounted) return;
 
     final dayLabels = <int, String>{
       0: 'Sen',
@@ -3734,6 +3752,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Pilih minimal satu device');
       return;
     }
+    final ok = await _confirmApplyWithCacheGuard(
+      _selectedDeviceIds.toList(),
+      'Apply Playlist per Device',
+    );
+    if (!ok) return;
     try {
       final failed = <String>[];
       for (final deviceId in _selectedDeviceIds) {
@@ -3866,6 +3889,11 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
       _showMessage('Playlist sumber tidak ditemukan');
       return;
     }
+    final ok = await _confirmApplyWithCacheGuard(
+      _selectedDeviceIds.toList(),
+      'Apply Playlist ke Semua Device',
+    );
+    if (!ok) return;
 
     final failed = <String>[];
     for (final deviceId in _selectedDeviceIds) {
@@ -4591,6 +4619,115 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     _showMessage('$deleted device berhasil dihapus');
   }
 
+  void _setSafeMode(bool enabled) {
+    if (_safeMode == enabled) return;
+    setState(() {
+      _safeMode = enabled;
+      if (enabled) {
+        _showSnackbarNotifications = false;
+        _lastNoticeMessage = '';
+        _lastNoticeAt = null;
+        _lastNoticeTone = _NoticeTone.info;
+      }
+    });
+    if (enabled) {
+      _realtimeReconnectTimer?.cancel();
+      _realtimeRefreshDebounce?.cancel();
+      _closeRealtimeSocket();
+    } else {
+      _connectRealtime();
+    }
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _fetchDeviceCacheStatuses(
+    List<String> deviceIds,
+  ) async {
+    final result = <String, Map<String, dynamic>>{};
+    for (final deviceId in deviceIds) {
+      try {
+        final status = await _api.fetchDeviceMediaCacheStatus(deviceId);
+        result[deviceId] = status;
+      } catch (e) {
+        result[deviceId] = {'error': e.toString()};
+      }
+    }
+    return result;
+  }
+
+  Future<void> _refreshDeviceHealthSummary() async {
+    if (_deviceHealthBusy) return;
+    if (_devices.isEmpty) {
+      _showMessage('Belum ada device terdaftar');
+      return;
+    }
+    setState(() {
+      _deviceHealthBusy = true;
+      _deviceHealthByDevice.clear();
+    });
+    try {
+      final ids = _devices.map((d) => d.id).toList();
+      final statuses = await _fetchDeviceCacheStatuses(ids);
+      _deviceHealthByDevice.addAll(statuses);
+      _deviceHealthCheckedAt = DateTime.now();
+    } finally {
+      if (mounted) setState(() => _deviceHealthBusy = false);
+    }
+  }
+
+  Future<bool> _confirmApplyWithCacheGuard(
+    List<String> deviceIds,
+    String actionLabel,
+  ) async {
+    if (deviceIds.isEmpty) return true;
+    final statuses = await _fetchDeviceCacheStatuses(deviceIds);
+    final notReady = <String>[];
+    for (final entry in statuses.entries) {
+      final status = entry.value;
+      String name = entry.key;
+      for (final d in _devices) {
+        if (d.id == entry.key) {
+          name = d.name;
+          break;
+        }
+      }
+      if (status['error'] != null) {
+        notReady.add('$name (error)');
+        continue;
+      }
+      final ready = status['ready'] == true;
+      if (!ready) {
+        final missingCount = (status['missing_count'] as num?)?.toInt() ?? 0;
+        notReady.add('$name (missing $missingCount)');
+      }
+    }
+    if (notReady.isEmpty) return true;
+    if (!mounted) return false;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Cache belum siap untuk $actionLabel'),
+        content: SizedBox(
+          width: 420,
+          child: Text(
+            'Device belum siap cache:\n${notReady.join('\n')}\n\nLanjutkan tetap apply?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Lanjutkan'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   Future<void> _checkSelectedDeviceMediaDownloadStatus() async {
     if (_deviceMediaCheckBusy) return;
     if (_selectedDeviceIds.isEmpty) {
@@ -4883,18 +5020,35 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             FilterChip(
-                              selected: _showSnackbarNotifications,
+                              selected: _safeMode,
                               onSelected: (value) {
-                                setState(
-                                  () => _showSnackbarNotifications = value,
-                                );
+                                _setSafeMode(value);
                                 _showMessage(
                                   value
-                                      ? 'Popup notification diaktifkan'
-                                      : 'Popup notification dimatikan',
+                                      ? 'Safe Mode diaktifkan (tanpa popup & auto refresh)'
+                                      : 'Safe Mode dimatikan',
                                   force: true,
                                 );
                               },
+                              label: Text(
+                                _safeMode ? 'Safe Mode: ON' : 'Safe Mode: OFF',
+                              ),
+                            ),
+                            FilterChip(
+                              selected: _showSnackbarNotifications,
+                              onSelected: _safeMode
+                                  ? null
+                                  : (value) {
+                                  setState(
+                                    () => _showSnackbarNotifications = value,
+                                  );
+                                  _showMessage(
+                                    value
+                                        ? 'Popup notification diaktifkan'
+                                        : 'Popup notification dimatikan',
+                                    force: true,
+                                  );
+                                },
                               label: Text(
                                 _showSnackbarNotifications
                                     ? 'Popup Notif: ON'
@@ -6443,8 +6597,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                     ),
                     child: Text(
                       _flashSaleLastDownloadSuccess
-                          ? 'Kecepatan download terakhir: ${_flashSaleLastDownloadRequiredCount} media ke ${_flashSaleLastDownloadTargetCount} device selesai dalam ${_formatDurationShort(_flashSaleLastDownloadDuration!)}'
-                          : 'Download terakhir belum selesai setelah ${_formatDurationShort(_flashSaleLastDownloadDuration!)} (${_flashSaleLastDownloadRequiredCount} media, ${_flashSaleLastDownloadTargetCount} device)',
+                          ? 'Kecepatan download terakhir: $_flashSaleLastDownloadRequiredCount media ke $_flashSaleLastDownloadTargetCount device selesai dalam ${_formatDurationShort(_flashSaleLastDownloadDuration!)}'
+                          : 'Download terakhir belum selesai setelah ${_formatDurationShort(_flashSaleLastDownloadDuration!)} ($_flashSaleLastDownloadRequiredCount media, $_flashSaleLastDownloadTargetCount device)',
                       style: TextStyle(
                         color: _flashSaleLastDownloadSuccess
                             ? const Color(0xFF166534)
@@ -7315,6 +7469,15 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                   _deviceSyncCheckBusy ? 'Cek Queue...' : 'Cek Sync Queue',
                 ),
               ),
+              ElevatedButton.icon(
+                onPressed: _deviceHealthBusy ? null : _refreshDeviceHealthSummary,
+                icon: const Icon(Icons.monitor_heart_outlined),
+                label: Text(
+                  _deviceHealthBusy
+                      ? 'Refresh Health...'
+                      : 'Refresh Health Summary',
+                ),
+              ),
               if (_deviceMediaCheckedAt != null)
                 Text(
                   'Dicek ${_deviceMediaCheckedAt!.hour.toString().padLeft(2, '0')}:${_deviceMediaCheckedAt!.minute.toString().padLeft(2, '0')}',
@@ -7323,8 +7486,53 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
                 Text(
                   'Queue ${_deviceSyncCheckedAt!.hour.toString().padLeft(2, '0')}:${_deviceSyncCheckedAt!.minute.toString().padLeft(2, '0')}',
                 ),
+              if (_deviceHealthCheckedAt != null)
+                Text(
+                  'Health ${_deviceHealthCheckedAt!.hour.toString().padLeft(2, '0')}:${_deviceHealthCheckedAt!.minute.toString().padLeft(2, '0')}',
+                ),
             ],
           ),
+          if (_deviceHealthByDevice.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Device Health Summary',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._devices.map((device) {
+                    final status = _deviceHealthByDevice[device.id] ?? const {};
+                    final error = (status['error'] ?? '').toString().trim();
+                    final ready = status['ready'] == true;
+                    final missingCount =
+                        (status['missing_count'] as num?)?.toInt() ?? 0;
+                    final updatedAt = (status['cache_updated_at'] ?? '').toString();
+                    final healthLine = error.isNotEmpty
+                        ? 'cache error'
+                        : (ready ? 'cache ready' : 'cache missing $missingCount');
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '${device.name} | ${device.status} | $healthLine | last: ${device.lastSeen ?? '-'} | cache: ${updatedAt.isEmpty ? '-' : updatedAt}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ],
           if (_deviceMediaStatusByDevice.isNotEmpty) ...[
             const SizedBox(height: 10),
             Container(

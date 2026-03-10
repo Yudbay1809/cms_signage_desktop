@@ -12,7 +12,10 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - CMS is aligned with backend final contract and websocket realtime refresh behavior.
 - Recommended production setup uses static backend base URL on LAN.
 
-## Latest Updates (2026-02-17)
+## Latest Updates (2026-03-11)
+- Safe Mode (default ON): tanpa popup spam, refresh manual saja, realtime socket dimatikan untuk server yang sibuk.
+- Device Health Summary panel: ringkasan online/offline, cache ready, last seen, missing media.
+- Batch Apply Validation Guard: sebelum apply massal, CMS validasi cache readiness agar tidak memaksa device yang belum siap.
 - `Kelola Playlist` is now global:
   - playlist list can be opened without selecting device first.
   - dropdown includes source context (`device/screen`) to avoid ambiguity.

@@ -9,7 +9,9 @@ Patch ini menambahkan peringatan upload media ramah device 2GB di CMS agar opera
 - Validasi ukuran file upload di UI Media (warning jika melebihi rekomendasi).
 - Validasi resolusi gambar (warning jika melebihi 1920x1080).
 - Konfirmasi sebelum lanjut upload saat file terlalu besar.
+- Indikator setelah upload bahwa device akan download via sync.
 
 ## Dampak
 - Mengurangi risiko file berat masuk ke playlist.
+- Operator langsung ingat untuk cek status download di Devices.
 - Performa playback di device 2GB lebih stabil.

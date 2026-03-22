@@ -272,6 +272,8 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   int _gridTargetTransitionDuration = 1;
   bool _uploading = false;
   double _uploadProgress = 0.0;
+  DateTime? _lastUploadAt;
+  int _lastUploadCount = 0;
   int _mediaTotal = 0;
   int _mediaOffset = 0;
   static const int _mediaPageSize = 120;
@@ -3642,6 +3644,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
         setState(() => _uploadProgress = done / total);
       }
       _showMessage('Upload berhasil');
+      setState(() {
+        _lastUploadAt = DateTime.now();
+        _lastUploadCount = total;
+      });
       setState(() => _selectedFiles = []);
       await _refresh();
     } catch (e) {
@@ -5408,6 +5414,36 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               if (_uploading) ...[
                 const SizedBox(height: 8),
                 LinearProgressIndicator(value: _uploadProgress),
+              ],
+              if (_lastUploadAt != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFBFDBFE)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.download_done, color: Color(0xFF2563EB)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Upload selesai ($_lastUploadCount file). Device akan download via sync. Cek tab Devices untuk status.',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _tabController.index = 6;
+                        }),
+                        child: const Text('Buka Devices'),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               const SizedBox(height: 12),
               if (_selectedFiles.isNotEmpty)

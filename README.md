@@ -14,6 +14,7 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 
 ## Latest Updates (2026-03-22)
 - Validasi upload media ramah 2GB (peringatan jika ukuran/resolusi terlalu besar).
+- Indikator setelah upload: pengingat bahwa device akan download via sync + tombol menuju tab Devices.
 - Safe Mode (default ON): tanpa popup spam, refresh manual saja, realtime socket dimatikan untuk server yang sibuk.
 - Device Health Summary panel: ringkasan online/offline, cache ready, last seen, missing media.
 - Batch Apply Validation Guard: sebelum apply massal, CMS validasi cache readiness agar tidak memaksa device yang belum siap.

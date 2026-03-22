@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -274,6 +275,10 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
   int _mediaTotal = 0;
   int _mediaOffset = 0;
   static const int _mediaPageSize = 120;
+  static const int _recommendImageMaxBytes = 2 * 1024 * 1024;
+  static const int _recommendVideoMaxBytes = 50 * 1024 * 1024;
+  static const int _recommendImageMaxWidth = 1920;
+  static const int _recommendImageMaxHeight = 1080;
   bool _mediaPageLoading = false;
   String _mediaServerQuery = '';
   String _mediaServerType = 'all';
@@ -3516,6 +3521,82 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
     }
   }
 
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var size = bytes.toDouble();
+    var unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit += 1;
+    }
+    return '${size.toStringAsFixed(size < 10 ? 1 : 0)} ${units[unit]}';
+  }
+
+  Future<String?> _buildMediaWarning(File file, String type) async {
+    final warnings = <String>[];
+    final size = await file.length();
+    if (type == 'image') {
+      if (size > _recommendImageMaxBytes) {
+        warnings.add(
+          'Ukuran gambar ${_formatBytes(size)} lebih besar dari rekomendasi ${_formatBytes(_recommendImageMaxBytes)}.',
+        );
+      }
+      try {
+        final bytes = await file.readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        final width = frame.image.width;
+        final height = frame.image.height;
+        if (width > _recommendImageMaxWidth ||
+            height > _recommendImageMaxHeight) {
+          warnings.add(
+            'Resolusi gambar ${width}x$height melebihi rekomendasi ${_recommendImageMaxWidth}x$_recommendImageMaxHeight.',
+          );
+        }
+      } catch (_) {
+        warnings.add('Resolusi gambar tidak dapat dibaca otomatis.');
+      }
+    } else if (type == 'video') {
+      if (size > _recommendVideoMaxBytes) {
+        warnings.add(
+          'Ukuran video ${_formatBytes(size)} lebih besar dari rekomendasi ${_formatBytes(_recommendVideoMaxBytes)}.',
+        );
+      }
+    }
+    if (warnings.isEmpty) return null;
+    return warnings.join('\n');
+  }
+
+  Future<bool> _confirmMediaWarning(String filename, String warning) async {
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Peringatan media besar'),
+          content: SizedBox(
+            width: 420,
+            child: Text(
+              'File: $filename\n\n$warning\n\nLanjutkan upload?',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Lanjut Upload'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
   Future<void> _upload() async {
     if (_selectedFiles.isEmpty) {
       _showMessage('Pilih file dulu');
@@ -3535,6 +3616,18 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
             'Tipe file tidak dikenali: ${file.uri.pathSegments.last}',
           );
           continue;
+        }
+        final warning = await _buildMediaWarning(file, type);
+        if (warning != null) {
+          final proceed =
+              await _confirmMediaWarning(_fileName(file), warning);
+          if (!proceed) {
+            done += 1;
+            if (mounted) {
+              setState(() => _uploadProgress = done / total);
+            }
+            continue;
+          }
         }
         await _api.uploadMedia(
           file: file,

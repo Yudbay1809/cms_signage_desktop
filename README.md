@@ -12,7 +12,8 @@ Desktop CMS built with Flutter for digital signage operations: upload media, bui
 - CMS is aligned with backend final contract and websocket realtime refresh behavior.
 - Recommended production setup uses static backend base URL on LAN.
 
-## Latest Updates (2026-03-11)
+## Latest Updates (2026-03-22)
+- Validasi upload media ramah 2GB (peringatan jika ukuran/resolusi terlalu besar).
 - Safe Mode (default ON): tanpa popup spam, refresh manual saja, realtime socket dimatikan untuk server yang sibuk.
 - Device Health Summary panel: ringkasan online/offline, cache ready, last seen, missing media.
 - Batch Apply Validation Guard: sebelum apply massal, CMS validasi cache readiness agar tidak memaksa device yang belum siap.

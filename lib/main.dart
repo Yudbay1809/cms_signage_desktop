@@ -7814,6 +7814,73 @@ class _CmsHomeState extends State<CmsHome> with SingleTickerProviderStateMixin {
               ),
             ),
           ],
+          if (_devices.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEF2FF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFC7D2FE)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Status Download Media (Android/Player)',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._devices.map((d) {
+                    final label = d.mediaDownloadStatusLabel.trim().isEmpty
+                        ? 'Belum Lapor'
+                        : d.mediaDownloadStatusLabel;
+                    final color = _parseHexColor(
+                      d.mediaDownloadStatusColor,
+                      fallback: d.mediaDownloadReady
+                          ? const Color(0xFF15803D)
+                          : const Color(0xFF6B7280),
+                    );
+                    final missing = d.mediaMissingCount;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '${d.name}: $label',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              missing > 0 ? 'missing $missing' : 'ready',
+                              style: TextStyle(
+                                color: color,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           if (_devices.isEmpty) const Text('Belum ada device terdaftar.'),
           Expanded(

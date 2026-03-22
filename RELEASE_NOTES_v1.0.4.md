@@ -10,8 +10,10 @@ Patch ini menambahkan peringatan upload media ramah device 2GB di CMS agar opera
 - Validasi resolusi gambar (warning jika melebihi 1920x1080).
 - Konfirmasi sebelum lanjut upload saat file terlalu besar.
 - Indikator setelah upload bahwa device akan download via sync.
+- Panel status download media per device (Android/player) di tab Devices.
 
 ## Dampak
 - Mengurangi risiko file berat masuk ke playlist.
 - Operator langsung ingat untuk cek status download di Devices.
+- Status download Android lebih terlihat.
 - Performa playback di device 2GB lebih stabil.
